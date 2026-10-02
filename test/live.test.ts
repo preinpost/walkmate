@@ -65,3 +65,31 @@ test("describes a target with components and file", () => {
 		'<Chart › Page › App> li "Compute" (src/Chart.tsx)',
 	);
 });
+
+test("replay uses saved copies of images, srcset and CSS url()", async () => {
+	const { rewriteAssets } = await import("../src/core/live/replay.ts");
+	const assets = { "http://x/logo.png": "assets/a.png", "http://x/f.woff2": "assets/b.woff2", "http://x/2x.png": "assets/c.png" };
+	const events: any[] = [
+		{
+			type: 2,
+			data: {
+				node: {
+					childNodes: [
+						{ attributes: { src: "http://x/logo.png", srcset: "http://x/logo.png 1x, http://x/2x.png 2x" } },
+						{ attributes: { _cssText: "@font-face{src:url(\"http://x/f.woff2\")}" } },
+						{ attributes: { src: "http://x/other.png" } },
+					],
+				},
+			},
+		},
+		{ type: 3, data: { source: 0, adds: [{ node: { attributes: { style: "background:url(http://x/logo.png)" } } }], attributes: [{ attributes: { src: "http://x/2x.png" } }] } },
+	];
+	rewriteAssets(events, assets);
+	const [img, style, other] = events[0].data.node.childNodes;
+	assert.equal(img.attributes.src, "assets/a.png");
+	assert.equal(img.attributes.srcset, "assets/a.png 1x, assets/c.png 2x");
+	assert.equal(style.attributes._cssText, '@font-face{src:url("assets/b.woff2")}');
+	assert.equal(other.attributes.src, "http://x/other.png");
+	assert.equal(events[1].data.adds[0].node.attributes.style, "background:url(assets/a.png)");
+	assert.equal(events[1].data.attributes[0].attributes.src, "assets/c.png");
+});

@@ -3,7 +3,9 @@ import { createWriteStream, readFileSync, type WriteStream } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ClipInfo } from "../types.ts";
+import { env } from "../config.ts";
 import { distFile } from "./assets.ts";
+import { Capture, type ConsoleEntry, type NetEntry } from "./capture.ts";
 import { type Browser, launchChrome } from "./cdp.ts";
 import type { Recorder, Recording } from "./mic.ts";
 
@@ -68,7 +70,23 @@ export interface LiveOutcome {
 	shots: Shot[];
 	/** One rrweb event stream (JSON lines) per tab. */
 	rrweb: { tab: number; file: string }[];
+	network: NetEntry[];
+	console: ConsoleEntry[];
+	/** Original URL → saved file (relative to the review folder), for the replay. */
+	assets: Record<string, string>;
+	/** Non-HTML documents the reviewer opened (PDF previews, images, JSON), with a saved copy. */
+	docs: DocEntry[];
 	warnings: string[];
+}
+
+export interface DocEntry {
+	t: number;
+	tab: number;
+	url: string;
+	mime: string;
+	file?: string;
+	bytes?: number;
+	error?: string;
 }
 
 export interface LiveOptions {
@@ -106,8 +124,9 @@ const BINDING = "__piReview";
 function pageScript(): string {
 	const rrweb = distFile("@rrweb/record", "record.umd.min.cjs");
 	const live = readFileSync(new URL("../page/live.js", import.meta.url), "utf8");
+	const cfg = JSON.stringify({ canvasFps: Number(env("CANVAS_FPS") ?? 1) });
 	// Load the UMD bundle as a CommonJS module so it does not touch the app's globals.
-	return `(function(){if(window.top!==window||window.__piRrweb||location.href==="about:blank")return;var module={exports:{}};var exports=module.exports;\n${rrweb}\n;window.__piRrweb=module.exports;})();\n${live}`;
+	return `window.__piReviewCfg=${cfg};(function(){if(window.top!==window||window.__piRrweb||location.href==="about:blank")return;var module={exports:{}};var exports=module.exports;\n${rrweb}\n;window.__piRrweb=module.exports;})();\n${live}`;
 }
 
 /** Open the app in the review browser and record until the reviewer submits, cancels, or closes it. */
@@ -132,6 +151,54 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 	let activePoint: string | null = null;
 	let pins = 0;
 	let busy: string | null = null;
+	let firstTab: string | undefined;
+	const docs: DocEntry[] = [];
+
+	// Which tab the reviewer is looking at. Logged so the report knows what each sentence was about.
+	// Blank start-up tabs are not something the reviewer looked at, so nothing counts until the review tab opens.
+	let started = false;
+	const setActive = (tab: Tab | undefined) => {
+		if (!tab || tab === activeTab || (!started && tab.targetId !== firstTab)) return;
+		started = true;
+		activeTab = tab;
+		events.push({ t: sec(Date.now()), tab: tab.n, type: "tab", url: tab.url });
+	};
+
+	const capture = new Capture(cdp, opts.dir, sec, (sessionId) => tabs.get(sessionId)?.n);
+
+	const MAX_DOC = 50 * 1024 * 1024;
+	/** Save a copy of a non-HTML document from inside the tab, so blob: URLs and logged-in pages work too. */
+	async function saveDoc(tab: Tab, url: string, mime: string) {
+		if (docs.some((d) => d.url === url)) return;
+		const doc: DocEntry = { t: sec(Date.now()), tab: tab.n, url, mime };
+		docs.push(doc);
+		events.push({ t: doc.t, tab: tab.n, type: "doc", url, value: mime });
+		const expr = `(async () => {
+			const r = await fetch(location.href, { headers: { "x-pi-review": "doc" } });
+			const b = new Uint8Array(await r.arrayBuffer());
+			if (b.length > ${MAX_DOC}) return { tooBig: b.length };
+			let s = "";
+			for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+			return { b64: btoa(s) };
+		})()`;
+		try {
+			const res = await cdp.send<{ result: { value?: { b64?: string; tooBig?: number } }; exceptionDetails?: unknown }>(
+				"Runtime.evaluate",
+				{ expression: expr, awaitPromise: true, returnByValue: true },
+				tab.sessionId,
+			);
+			const v = res.result.value;
+			if (!v?.b64) throw new Error(v?.tooBig ? `너무 큼 (${v.tooBig} bytes)` : "읽지 못함");
+			const buf = Buffer.from(v.b64, "base64");
+			const ext = mime.includes("pdf") ? "pdf" : (mime.split("/")[1]?.split(/[;+]/)[0] ?? "bin");
+			doc.file = `docs/tab${tab.n}-${docs.length}.${ext}`;
+			doc.bytes = buf.length;
+			await mkdir(join(opts.dir, "docs"), { recursive: true });
+			await writeFile(join(opts.dir, doc.file), buf);
+		} catch (err) {
+			doc.error = err instanceof Error ? err.message : String(err);
+		}
+	}
 
 	// "closed": the reviewer closed the window, which counts as submitting if they left anything.
 	type Status = LiveOutcome["status"] | "closed";
@@ -261,6 +328,7 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 		try {
 			await s("Page.enable");
 			await s("Runtime.enable");
+			await capture.enable(sessionId);
 			await s("Page.setBypassCSP", { enabled: true });
 			await s("Runtime.addBinding", { name: BINDING });
 			await s("Page.addScriptToEvaluateOnNewDocument", { source: script });
@@ -272,7 +340,8 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 			if (waiting) await s("Runtime.runIfWaitingForDebugger").catch(() => {});
 		}
 		tab.ready = true;
-		activeTab ??= tab;
+		// Tabs opened after the first one (window.open, a PDF preview, ctrl+T) come to the front.
+		if (firstTab && firstTab !== targetId) setActive(tab);
 	}
 
 	cdp.on("Target.attachedToTarget", (p) => {
@@ -289,7 +358,7 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 		tabs.delete(p.sessionId);
 		targets.delete(tab.targetId);
 		tab.rr?.end();
-		if (activeTab === tab) activeTab = [...tabs.values()].at(-1);
+		if (activeTab === tab) setActive([...tabs.values()].filter((t) => !t.hidden).at(-1) ?? [...tabs.values()].at(-1));
 		if (!tabs.size) settle("closed");
 	});
 	// A tab opened by the page reuses its initial about:blank window for the real page, and Chrome
@@ -320,14 +389,15 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 				tab.dpr = Number(msg.dpr) || 1;
 				tab.url = msg.url;
 				evaluate(tab, `window.__piReviewSet?.(${JSON.stringify(state())})`);
+				if (msg.contentType && !/html|xml/.test(msg.contentType)) saveDoc(tab, msg.url, msg.contentType);
 				return;
 			case "focus":
-				activeTab = tab;
 				tab.hidden = false;
+				setActive(tab);
 				return;
 			case "ptr":
 				tab.ptr = { x: msg.x, y: msg.y };
-				activeTab = tab;
+				setActive(tab);
 				return;
 			case "rr": {
 				if (!tab.rr) {
@@ -339,7 +409,7 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 				return;
 			}
 			case "cmd":
-				activeTab = tab;
+				setActive(tab);
 				if (msg.cmd === "rec") toggleRec();
 				else if (msg.cmd === "submit") finish("submitted");
 				else if (msg.cmd === "cancel") finish("cancelled");
@@ -352,11 +422,13 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 				const { kind: _k, at, ...rest } = msg;
 				const e: LiveEvent = { ...rest, t: sec(at), tab: tab.n };
 				events.push(e);
-				if (e.type === "away") tab.hidden = true;
-				else if (e.type === "back") {
+				if (e.type === "away") {
+					tab.hidden = true;
+					if (activeTab === tab) setActive([...tabs.values()].filter((t) => !t.hidden).at(-1));
+				} else if (e.type === "back") {
 					tab.hidden = false;
-					activeTab = tab;
-				} else if (e.type !== "nav") activeTab = tab;
+					setActive(tab);
+				} else if (e.type !== "nav") setActive(tab);
 				if (e.type === "nav" && e.url) tab.url = e.url;
 				if (e.x !== undefined && e.y !== undefined) tab.ptr = { x: e.x, y: e.y };
 				if (e.type === "pin") {
@@ -394,22 +466,37 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 		}
 		const targetId =
 			first?.targetId ?? (await cdp.send<{ targetId: string }>("Target.createTarget", { url: "about:blank" })).targetId;
+		firstTab = targetId;
 		let tab: Tab | undefined;
 		for (let i = 0; i < 100 && !tab; i++) {
 			tab = [...tabs.values()].find((x) => x.targetId === targetId && x.ready);
 			if (!tab) await new Promise((r) => setTimeout(r, 50));
 		}
 		if (!tab) throw new Error("리뷰 탭을 열지 못했습니다.");
-		activeTab = tab;
+		setActive(tab);
 		await cdp.send("Page.navigate", { url: opts.url }, tab.sessionId);
 		await cdp.send("Page.bringToFront", {}, tab.sessionId).catch(() => {});
 		opts.onReady?.({ port: browser.port, targetId: tab.targetId });
 
 		const raw = await done;
 		await stopRec().catch(() => {});
+		await capture.finish().catch(() => {});
 		const left = clips.length > 0 || pins > 0;
 		const status = raw === "closed" ? (left ? "submitted" : "cancelled") : raw;
-		return { status, t0, duration: sec(Date.now()), events, clips, shots, rrweb, warnings };
+		return {
+			status,
+			t0,
+			duration: sec(Date.now()),
+			events,
+			clips,
+			shots,
+			rrweb,
+			network: capture.network,
+			console: capture.console,
+			assets: Object.fromEntries(capture.assets),
+			docs,
+			warnings,
+		};
 	} finally {
 		clearInterval(ticker);
 		if (timeout) clearTimeout(timeout);

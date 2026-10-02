@@ -3,6 +3,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { groupUtterances, type Utterance } from "../timeline.ts";
 import type { Word } from "../types.ts";
+import type { ConsoleEntry, NetEntry } from "./capture.ts";
 import type { Desc, LiveEvent, LiveOutcome, Point, Shot } from "./session.ts";
 
 export interface LiveReportInput {
@@ -37,7 +38,22 @@ export interface LiveUtterance extends Utterance {
 	focus?: LiveEvent;
 	point?: string;
 	shot?: Shot;
+	/** Failed or slow requests and console errors around the time it was said. */
+	net?: NetEntry[];
+	errors?: ConsoleEntry[];
 }
+
+/** The tab in front at time t, from the "tab" events the session logs. */
+export function tabAt(events: LiveEvent[], t: number): number | undefined {
+	let tab: number | undefined;
+	for (const e of events) if (e.type === "tab" && e.t <= t) tab = e.tab;
+	return tab;
+}
+
+const API = new Set(["XHR", "Fetch", "EventSource"]);
+const SLOW = 1;
+const failed = (n: NetEntry) => (n.failed ? n.failed !== "canceled" : (n.status ?? 0) >= 400);
+const isError = (c: ConsoleEntry) => c.level === "error" || c.level === "exception";
 
 const MIN_HOVER = 0.6;
 const ATTRIBUTE_BEFORE = 3;
@@ -90,13 +106,21 @@ export function attributeLive(utterances: Utterance[], events: LiveEvent[]): Liv
 	const focus = events.filter((e) => FOCUS_TYPES.has(e.type) && e.d);
 	const points = events.filter((e) => e.type === "point");
 	// A click that leaves the page (a navigation follows at once) is the reviewer moving on.
+	// So is a click that opens another tab (a PDF preview, a new window).
 	const leaving = new Set(
-		focus.filter((e) => e.type === "click" && events.some((n) => n.type === "nav" && n.tab === e.tab && n.t >= e.t && n.t - e.t < 1)),
+		focus.filter(
+			(e) =>
+				e.type === "click" &&
+				events.some((n) => ((n.type === "nav" && n.tab === e.tab) || (n.type === "tab" && n.tab !== e.tab)) && n.t >= e.t && n.t - e.t < 1.5),
+		),
 	);
 	return utterances.map((u) => {
+		// Only what happened in the tab they were looking at counts.
+		const front = tabAt(events, u.start);
+		const here = front === undefined ? focus : focus.filter((e) => e.tab === front);
 		let best: LiveEvent | undefined;
 		let bestScore = Number.POSITIVE_INFINITY;
-		for (const e of focus) {
+		for (const e of here) {
 			if (e.t < u.start - ATTRIBUTE_BEFORE || e.t > u.end) continue;
 			if (e.t > u.start && leaving.has(e)) continue;
 			// People point, then talk; something touched mid-sentence is usually where they go next.
@@ -109,9 +133,9 @@ export function attributeLive(utterances: Utterance[], events: LiveEvent[]): Liv
 				bestScore = score;
 			}
 		}
-		if (!best) best = [...focus].reverse().find((e) => e.t <= u.start);
+		if (!best) best = [...here].reverse().find((e) => e.t <= u.start);
 		const point = [...points].reverse().find((e) => e.t <= u.start)?.id;
-		return { ...u, tab: best?.tab ?? 1, focus: best, point };
+		return { ...u, tab: front ?? best?.tab ?? 1, focus: best, point };
 	});
 }
 
@@ -119,11 +143,13 @@ export function attributeLive(utterances: Utterance[], events: LiveEvent[]): Liv
 const pinShot = (shots: Shot[], p: LiveEvent) =>
 	shots.find((s) => s.pin !== undefined && s.pin === p.id) ?? shots.find((s) => s.reason === "pin" && Math.abs(s.t - p.t) < 1.5);
 
-function pickShot(shots: Shot[], u: LiveUtterance): Shot | undefined {
+function pickShot(all: Shot[], u: LiveUtterance): Shot | undefined {
 	if (u.focus?.type === "pin") {
-		const pin = pinShot(shots, u.focus);
+		const pin = pinShot(all, u.focus);
 		if (pin) return pin;
 	}
+	const sameTab = all.filter((s) => s.tab === u.tab);
+	const shots = sameTab.length ? sameTab : all;
 	// About a second into speaking: the screen they are talking about, not the one they just left.
 	const target = u.start + 0.8;
 	let best: Shot | undefined;
@@ -138,7 +164,28 @@ export async function buildLiveReport(input: LiveReportInput): Promise<LiveRepor
 	const { outcome } = input;
 	const events = compressLive(outcome.events, outcome.duration);
 	const utterances = attributeLive(groupUtterances(input.words), events);
-	for (const u of utterances) u.shot = pickShot(outcome.shots, u);
+	const net = outcome.network ?? [];
+	const logs = outcome.console ?? [];
+	for (const u of utterances) {
+		u.shot = pickShot(outcome.shots, u);
+		u.net = [];
+		u.errors = [];
+	}
+	// Each slow or failed request and each error goes under one sentence: people see the symptom
+	// first and then say so, so prefer the next sentence started within 5s, else the one being said.
+	const ownerOf = (tab: number, t: number) =>
+		utterances.find((u) => u.tab === tab && u.start >= t - 0.5 && u.start - t <= 5) ??
+		utterances.find((u) => u.tab === tab && u.start <= t && t <= u.end + 1);
+	for (const n of net) {
+		if (!(failed(n) || ((n.duration ?? 0) >= SLOW && API.has(n.type)))) continue;
+		const u = ownerOf(n.tab, n.t);
+		if (u && u.net!.length < 4) u.net!.push(n);
+	}
+	for (const c of logs) {
+		if (!isError(c)) continue;
+		const u = ownerOf(c.tab, c.t);
+		if (u && u.errors!.length < 3) u.errors!.push(c);
+	}
 	const pins = events.filter((e) => e.type === "pin");
 	const recorded = recordedSeconds(outcome.events, outcome.duration);
 	const origin = safeOrigin(input.url);
@@ -181,6 +228,12 @@ export async function buildLiveReport(input: LiveReportInput): Promise<LiveRepor
 		`- ${input.url} · 리뷰 ${clock(outcome.duration)} · 녹음 ${clock(recorded)} · 발화 ${utterances.length} · 핀 ${pins.length} · 스크린샷 ${chosen.size}장 첨부`,
 	);
 	if (recorded > 0) head.push(`- 받아쓰기: ${input.engine}`);
+	{
+		const fails = net.filter(failed).length;
+		const errs = logs.filter(isError).length;
+		const docsN = (outcome.docs ?? []).length;
+		head.push(`- 네트워크 요청 ${net.length} (실패 ${fails}) · 콘솔 오류 ${errs}${docsN ? ` · 열어 본 파일 ${docsN}` : ""}`);
+	}
 	for (const w of [...outcome.warnings, ...input.warnings]) head.push(`- ⚠ ${w}`);
 	head.push(`- 원본: ${input.dir}  (replay.html 로 화면과 음성을 같이 재생)`);
 	if (!utterances.length && !pins.length) head.push("", "리뷰어가 말이나 핀 없이 제출했습니다. 아래 타임라인에는 화면에서 한 행동만 있습니다.");
@@ -190,10 +243,15 @@ export async function buildLiveReport(input: LiveReportInput): Promise<LiveRepor
 		body.push("", "## 피드백 (말한 순서)", "각 발화 아래 ↳ 는 그때 가리키거나 클릭한 대상입니다. '이거/여기'는 그 대상을 뜻합니다.", "");
 		utterances.forEach((u, i) => {
 			body.push(`${i + 1}. [${stamp(u.start)}] 🗣 "${u.text}"`);
-			const parts = [urlAt(u.tab, u.start), u.focus ? where(u.focus) : undefined].filter(Boolean);
+			// In a PDF preview nothing inside can be pointed at; say which document it was instead.
+			const doc = u.focus ? undefined : (outcome.docs ?? []).filter((d) => d.tab === u.tab && d.t <= u.start + 1).at(-1);
+			const docLabel = doc ? `📄 ${doc.mime.includes("pdf") ? "PDF" : doc.mime}${doc.file ? ` (사본 ${doc.file})` : ""}` : undefined;
+			const parts = [urlAt(u.tab, u.start), u.focus ? where(u.focus) : docLabel].filter(Boolean);
 			const n = shotNo(u.shot);
 			if (parts.length || n) body.push(`   ↳ ${parts.join(" · ")}${n ? `  🖼 #${n}` : ""}`);
 			if (u.point) body.push(`   ↳ 포인트: ${pointTitle(input.points, u.point)}`);
+			for (const n of u.net ?? []) body.push(`   🌐 ${netLine(n, origin)}`);
+			for (const c of u.errors ?? []) body.push(`   ⛔ ${consoleLine(c)}`);
 		});
 	}
 	if (pins.length) {
@@ -207,6 +265,35 @@ export async function buildLiveReport(input: LiveReportInput): Promise<LiveRepor
 			}
 		});
 	}
+	const docs = outcome.docs ?? [];
+	if (docs.length) {
+		body.push("", "## 열어 본 파일", "앱 페이지가 아닌 문서(PDF 미리보기 등)입니다. 안의 클릭·스크롤은 기록되지 않아 스크린샷과 사본으로 확인하세요.");
+		for (const d of docs) {
+			const saved = d.file ? `사본: ${join(input.dir, d.file)} (${kb(d.bytes ?? 0)})` : `사본 저장 실패: ${d.error}`;
+			body.push(`- [${stamp(d.t)}] 📄 ${d.mime} ${shortUrl(d.url, origin).slice(0, 120)} → ${saved}`);
+		}
+	}
+
+	const api = net.filter((n) => API.has(n.type) || (n.type === "Document" && failed(n)));
+	const badOther = net.filter((n) => !API.has(n.type) && n.type !== "Document" && failed(n));
+	if (api.length || badOther.length) {
+		const fails = net.filter(failed).length;
+		body.push("", `## 네트워크 (API ${api.filter((n) => API.has(n.type)).length} · 실패 ${fails} · 전체 요청 ${net.length})`);
+		body.push(`응답 본문은 ${input.dir}/network/ 에, 전체 목록은 ${input.dir}/network.json 에 있습니다.`);
+		// Failures and slow calls are what reviews are usually about, so they survive the cut.
+		const shown = api.length > 60 ? api.filter((n) => failed(n) || (n.duration ?? 0) >= SLOW).slice(0, 60) : api;
+		for (const n of shown) body.push(`- ${netLine(n, origin)}`);
+		if (shown.length < api.length) body.push(`- … 나머지 ${api.length - shown.length}건은 network.json`);
+		for (const n of badOther.slice(0, 20)) body.push(`- ${netLine(n, origin)}`);
+	}
+
+	const problems = logs.filter((c) => isError(c) || c.level === "warn");
+	if (problems.length) {
+		body.push("", `## 콘솔 (오류 ${logs.filter(isError).length} · 경고 ${logs.filter((c) => c.level === "warn").length})`, `전체 로그: ${input.dir}/console.json`);
+		for (const c of problems.slice(0, 30)) body.push(`- ${consoleLine(c)}`);
+		if (problems.length > 30) body.push(`- … 나머지 ${problems.length - 30}건은 console.json`);
+	}
+
 	if (input.points.length) {
 		body.push("", "## 리뷰 포인트");
 		for (const p of input.points) {
@@ -220,11 +307,14 @@ export async function buildLiveReport(input: LiveReportInput): Promise<LiveRepor
 		const line = describeEvent(e, input.points, origin);
 		if (line) rows.push({ t: e.t, text: line });
 	}
+	// API calls and errors belong in the timeline; images and scripts would drown it.
+	for (const n of net) if (API.has(n.type) || failed(n)) rows.push({ t: n.t, text: `🌐 ${netLine(n, origin, false)}` });
+	for (const c of logs) if (isError(c)) rows.push({ t: c.t, text: `⛔ ${consoleLine(c, false)}` });
 	rows.sort((a, b) => a.t - b.t);
 	const timeline = [
 		"",
 		"## 타임라인",
-		"🗣 말 · 📍 페이지 · 👉 포인터 · 🖱 클릭 · 📌 핀 · ✂ 선택 · ⌨ 입력 · ↕ 스크롤 · 🎯 포인트",
+		"🗣 말 · 📍 페이지 · 🗂 탭 전환 · 📄 문서 · 👉 포인터 · 🖱 클릭 · 📌 핀 · ✂ 선택 · ⌨ 입력 · ↕ 스크롤 · 🎯 포인트 · 🌐 API · ⛔ 오류",
 		"",
 		...rows.map((r) => `[${stamp(r.t)}] ${r.text}`),
 	];
@@ -276,6 +366,10 @@ function describeEvent(e: LiveEvent, points: Point[], origin?: string): string |
 			return `↕ ${e.pct}%${e.d ? ` · 화면 중앙: ${describeTarget(e.d)}` : ""}`;
 		case "point":
 			return `🎯 포인트 ${pointTitle(points, e.id)}`;
+		case "tab":
+			return `🗂 탭 ${e.tab}${e.url && e.url !== "about:blank" ? ` ${shortUrl(e.url, origin).slice(0, 100)}` : ""}`;
+		case "doc":
+			return `📄 ${e.value} 열림 (탭 ${e.tab})`;
 		case "rec-start":
 			return "🎙 녹음 시작";
 		case "rec-stop":
@@ -284,6 +378,26 @@ function describeEvent(e: LiveEvent, points: Point[], origin?: string): string |
 			return undefined;
 	}
 }
+
+function netLine(n: NetEntry, origin?: string, withBody = true): string {
+	const path = n.url.startsWith(origin ?? "\u0000") ? n.url.slice(origin!.length) || "/" : n.url;
+	const status = n.failed ? `✖ ${n.failed}` : (n.status ?? "…");
+	const parts = [`[${stamp(n.t)}] ${n.method} ${path.slice(0, 160)} ${status}`];
+	if (n.duration !== undefined) parts.push(`${n.duration.toFixed(n.duration < 1 ? 2 : 1)}s`);
+	if (n.bytes) parts.push(kb(n.bytes));
+	if (n.type !== "XHR" && n.type !== "Fetch") parts.push(n.type);
+	let line = parts.join(" · ");
+	if (withBody && n.body) line += ` → ${n.body}`;
+	if (withBody && n.preview) line += `\n     응답: ${n.preview}`;
+	return line;
+}
+
+function consoleLine(c: ConsoleEntry, withTime = true): string {
+	const text = c.text.split("\n")[0].slice(0, 300);
+	return `${withTime ? `[${stamp(c.t)}] ` : ""}${c.level}: ${text}${c.count > 1 ? ` (×${c.count})` : ""}${c.source ? ` (${c.source})` : ""}`;
+}
+
+const kb = (b: number) => (b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)}MB` : `${Math.max(1, Math.round(b / 1024))}KB`);
 
 const pointTitle = (points: Point[], id?: string) => {
 	const p = points.find((x) => x.id === id);

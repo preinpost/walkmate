@@ -8,12 +8,24 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "paths": {
-      "@earendil-works/pi-coding-agent": ["/Users/ms/.local/share/mise/installs/node/26.10.0/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"],
-      "@earendil-works/pi-tui": ["/Users/ms/.local/share/mise/installs/node/26.10.0/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.d.ts"],
-      "typebox": ["/Users/ms/.local/share/mise/installs/node/26.10.0/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/typebox/build/index.d.mts"]
-    }
+      "@earendil-works/pi-coding-agent": [
+        "/Users/ms/.local/share/mise/installs/node/26.10.0/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
+      ],
+      "@earendil-works/pi-tui": [
+        "/Users/ms/.local/share/mise/installs/node/26.10.0/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.d.ts"
+      ],
+      "typebox": [
+        "/Users/ms/.local/share/mise/installs/node/26.10.0/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/typebox/build/index.d.mts"
+      ]
+    },
+    "erasableSyntaxOnly": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts"
+  ]
 }

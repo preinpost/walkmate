@@ -4,7 +4,7 @@
 // pin with a note, in-app navigation, full navigation, submit), feeds speech from `say -v Yuna`
 // as the microphone, then prints the report and writes replay.html.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -24,7 +24,7 @@ execFileSync("say", [
 	"Yuna",
 	"-o",
 	speech,
-	"이 범례 색이 너무 비슷해서 구분이 안 돼요. [[slnc 1800]] 여기 숫자는 오른쪽 정렬해 주세요. [[slnc 1800]] 이 영역은 간격이 너무 좁아요. [[slnc 1800]] 청구서 화면은 로딩이 너무 길어요.",
+	"이 범례 색이 너무 비슷해서 구분이 안 돼요. [[slnc 1800]] 여기 숫자는 오른쪽 정렬해 주세요. [[slnc 1800]] 이 영역은 간격이 너무 좁아요. [[slnc 1800]] 청구서 화면은 로딩이 너무 길어요. [[slnc 1800]] PDF 미리보기는 글씨가 너무 작아요.",
 ]);
 
 // The "microphone" plays the speech from the moment recording starts.
@@ -43,7 +43,7 @@ const APP = `<!doctype html><html><head><meta charset="utf-8"><title>Watcher tes
 <body><h1 id="h">대시보드</h1>
 <ul id="legend"><li>Compute</li><li>Storage</li></ul>
 <table><tr><td>서비스</td><td id="num">1,234,000원</td></tr></table>
-<p><a id="inv" href="/invoice">청구서 보기</a> · <a id="full" href="/settings">설정</a></p>
+<p><img id="logo" src="/logo.png" width="40" alt="로고"> <a id="inv" href="/invoice">청구서 보기</a> · <a id="full" href="/settings">설정</a> · <button id="pdf">PDF 미리보기</button></p>
 <div id="slow"></div>
 <script>
 const fiber = (el, name, file) => {
@@ -59,10 +59,23 @@ document.getElementById("inv").onclick = (e) => {
   history.pushState({}, "", "/invoice");
   document.getElementById("h").textContent = "청구서";
   document.getElementById("slow").textContent = "불러오는 중…";
+  fetch("/api/invoice").then((r) => r.json()).then((j) => (document.getElementById("slow").textContent = "합계 " + j.total));
+  fetch("/api/summary?month=10").then((r) => { if (!r.ok) console.error("청구 요약을 불러오지 못했습니다", r.status); });
 };
+document.getElementById("pdf").onclick = () => window.open("/doc.pdf");
 </script></body></html>`;
 
-const app = createServer((req, res) => {
+const logo = join(dir, "logo.png");
+execFileSync("ffmpeg", ["-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x2f6fed:s=40x40", "-frames:v", "1", logo]);
+const app = createServer(async (req, res) => {
+	if (req.url === "/logo.png") return void res.writeHead(200, { "content-type": "image/png" }).end(readFileSync(logo));
+	if (req.url === "/doc.pdf") return void res.writeHead(200, { "content-type": "application/pdf" }).end(tinyPdf("Invoice 2025-10  Total 1,234,000 KRW"));
+	if (req.url === "/api/invoice") {
+		await sleep(1500);
+		return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id: 42, total: "1,234,000원", items: 3 }));
+	}
+	if (req.url?.startsWith("/api/summary"))
+		return void res.writeHead(500, { "content-type": "application/json" }).end(JSON.stringify({ error: "db timeout", code: "E_DB" }));
 	res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": "script-src 'self' 'unsafe-inline'" });
 	res.end(req.url === "/settings" ? `<!doctype html><meta charset="utf-8"><h1>설정</h1><button>저장</button>` : APP);
 });
@@ -149,6 +162,40 @@ try {
 	await move("#slow");
 	await sleep(3500);
 	console.log("url after in-app nav:", await js("location.pathname"));
+	// A PDF preview in a new tab: the session should switch to it and save a copy.
+	await click("#pdf");
+	await sleep(1500);
+	// Pin on top of the PDF viewer: the glass has to catch the click, not the plugin.
+	{
+		const targets = (await fetch(`http://127.0.0.1:${control.port}/json/list`).then((r) => r.json())) as { url: string; type: string; webSocketDebuggerUrl: string }[];
+		const pdfTab = targets.find((t) => t.type === "page" && t.url.endsWith("/doc.pdf"));
+		if (pdfTab) {
+			const w = new WebSocket(pdfTab.webSocketDebuggerUrl);
+			await new Promise((r) => w.addEventListener("open", r, { once: true }));
+			let n = 0;
+			const send = (method: string, params: object) =>
+				new Promise<void>((resolve) => {
+					const my = ++n;
+					w.addEventListener("message", function on(m) {
+						if (JSON.parse(String(m.data)).id === my) {
+							w.removeEventListener("message", on);
+							resolve();
+						}
+					});
+					w.send(JSON.stringify({ id: my, method, params }));
+				});
+			await send("Runtime.evaluate", { expression: "window.__piReviewPin(true)" });
+			await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 500, y: 300 });
+			await send("Input.dispatchMouseEvent", { type: "mousePressed", x: 500, y: 300, button: "left", clickCount: 1 });
+			await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: 500, y: 300, button: "left", clickCount: 1 });
+			await sleep(300);
+			await send("Input.insertText", { text: "글씨 키우기" });
+			await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+			w.close();
+		} else console.log("pdf tab not found");
+	}
+	await sleep(5500);
+	await cdp("Page.bringToFront");
 	await click("#full");
 	await sleep(1500);
 	console.log("toolbar after full nav:", await js("!!document.querySelector('pi-review-toolbar')"));
@@ -190,10 +237,42 @@ try {
 		dir,
 		maxShots: 6,
 	});
-	const replay = await writeReplay({ dir, title: "E2E", t0: outcome.t0, rrweb: outcome.rrweb, clips: outcome.clips, utterances: report.utterances });
+	const replay = await writeReplay({
+		dir,
+		title: "E2E",
+		t0: outcome.t0,
+		rrweb: outcome.rrweb,
+		clips: outcome.clips,
+		utterances: report.utterances,
+		assets: outcome.assets,
+	});
+	console.log("assets:", JSON.stringify(outcome.assets));
+	console.log("replay uses saved assets:", replay ? readFileSync(replay, "utf8").includes("assets/") : false);
 	console.log(`\n${report.full}\n`);
 	console.log("attached:", report.attached.map((a) => a.file));
 	console.log("replay:", replay);
 } finally {
 	app.close();
+}
+
+/** A one-page PDF with a line of ASCII text. */
+function tinyPdf(text: string): Buffer {
+	const content = `BT /F1 16 Tf 24 100 Td (${text}) Tj ET`;
+	const objs = [
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+		`<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+	];
+	let out = "%PDF-1.4\n";
+	const offsets: number[] = [];
+	objs.forEach((o, i) => {
+		offsets.push(out.length);
+		out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+	});
+	const xref = out.length;
+	out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")}`;
+	out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+	return Buffer.from(out, "latin1");
 }

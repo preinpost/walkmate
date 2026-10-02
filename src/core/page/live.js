@@ -87,6 +87,12 @@
 
   const clean = (s) => (s || "").replace(/\s+/g, " ").trim();
   const textOf = (el) => {
+    if (/^(EMBED|OBJECT|IFRAME)$/.test(el.tagName)) {
+      const src = el.getAttribute("src") || el.getAttribute("data") || "";
+      const kind = /pdf/.test(el.getAttribute("type") || "") || document.contentType === "application/pdf" ? "PDF 문서" : el.tagName.toLowerCase();
+      const name = src && src !== "about:blank" ? ` ${src.split(/[?#]/)[0].split("/").pop()}` : "";
+      return `${el.getAttribute("title") || kind}${name}`.slice(0, 80);
+    }
     const a = el.getAttribute?.("aria-label") || el.getAttribute?.("title") || el.getAttribute?.("alt") || el.getAttribute?.("placeholder");
     if (a) return clean(a).slice(0, 80);
     const t = clean(el.innerText ?? el.textContent);
@@ -96,14 +102,20 @@
     let s = el.tagName.toLowerCase();
     const role = el.getAttribute("role");
     if (role) s += `[role=${role}]`;
+    const type = /^(EMBED|OBJECT)$/.test(el.tagName) && el.getAttribute("type");
+    if (type) s += `[type=${type}]`;
     // Skip hashed class names from CSS modules and CSS-in-JS.
     const cls = [...el.classList].find((c) => c.length < 40 && !/^(css|sc|jsx|emotion)-|_[a-z0-9]{5,}$|^[a-z]{1,3}[A-Z0-9][A-Za-z0-9]{4,}$/.test(c));
     if (cls) s += `.${cls}`;
     return s;
   };
+  // A PDF or image tab is not an HTML page: its elements mean nothing, the document does.
+  const plainDoc = !/html|xml/.test(document.contentType);
+  const docName = () => `${document.contentType === "application/pdf" ? "PDF 문서" : document.contentType} ${decodeURIComponent(location.pathname.split("/").pop() || "")}`.trim();
   const describe = (raw) => {
     let el = raw instanceof Element ? raw : raw?.parentElement;
     if (!el || el === host) return;
+    if (plainDoc) return { tag: "document", text: docName(), rect: [0, 0, innerWidth, innerHeight] };
     if (el instanceof SVGElement && !(el instanceof SVGSVGElement)) el = el.closest("[class]") || el;
     let target = el.closest(MEANINGFUL) || el;
     const r0 = target.getBoundingClientRect();
@@ -188,6 +200,7 @@
 
   // ---------- rrweb, for replaying the session later ----------
 
+  const canvasFps = Number(window.__piReviewCfg?.canvasFps ?? 1);
   const startRrweb = () => {
     const rr = window.__piRrweb;
     if (!rr?.record) return;
@@ -195,7 +208,9 @@
     try {
       rr.record({
         emit: (e) => buf.push(e),
-        sampling: { mousemove: 50, scroll: 150, input: "last" },
+        sampling: { mousemove: 50, scroll: 150, input: "last", canvas: canvasFps || undefined },
+        recordCanvas: canvasFps > 0,
+        dataURLOptions: { type: "image/webp", quality: 0.6 },
         maskInputOptions: { password: true },
         inlineStylesheet: true,
         blockSelector: "[data-pi-review]",
@@ -254,6 +269,7 @@
     .hl { position: fixed; pointer-events: none; z-index: 2147483646; border: 3px solid #f5a524; border-radius: 4px;
           background: rgba(245,165,36,.12); display: none; }
     .hl.area { border-style: dashed; background: rgba(245,165,36,.08); }
+    .glass { position: fixed; inset: 0; z-index: 2147483644; cursor: crosshair; display: none; }
     .memo { position: fixed; z-index: 2147483647; width: 300px; padding: 8px; border-radius: 10px; background: rgba(28,28,30,.96);
             color: #f2f2f2; box-shadow: 0 6px 24px rgba(0,0,0,.3); }
     .marks { position: absolute; left: 0; top: 0; z-index: 2147483645; pointer-events: none; }
@@ -272,6 +288,7 @@
     const root = host.attachShadow({ mode: "closed" });
     root.innerHTML = `<style>${CSS}</style>
       <div class="marks"></div>
+      <div class="glass"></div>
       <div class="hl"></div>
       <div class="memo" hidden><div class="hint"></div><input placeholder="메모 (비워도 됩니다)"></div>
       <div class="wrap">
@@ -289,7 +306,7 @@
     const $ = (s) => root.querySelector(s);
     ui = { root, wrap: $(".wrap"), rec: $(".rec"), time: $(".time"), lvl: $(".lvl i"), pin: $(".pin"), pts: $(".pts"),
            submit: $(".submit"), cancel: $(".cancel"), panel: $(".panel"), hl: $(".hl"), toast: $(".toast"),
-           marks: $(".marks"), memo: $(".memo"), memoHint: $(".memo .hint"), memoInput: $(".memo input") };
+           glass: $(".glass"), marks: $(".marks"), memo: $(".memo"), memoHint: $(".memo .hint"), memoInput: $(".memo input") };
     ui.rec.onclick = () => post({ kind: "cmd", cmd: "rec" });
     ui.pin.onclick = () => setPinMode(!pinMode);
     ui.pts.onclick = () => (ui.panel.hidden = !ui.panel.hidden);
@@ -311,6 +328,7 @@
     };
     // Typing in our inputs must not trigger the app's keyboard shortcuts.
     for (const type of ["keydown", "keyup", "keypress", "input"]) host.addEventListener(type, (e) => e.stopPropagation());
+    bindGlass();
     document.documentElement.appendChild(host);
     render();
   };
@@ -368,8 +386,27 @@
   };
   const hideBox = () => (ui.hl.style.display = "none");
 
+  // While pinning, a transparent glass covers the page so clicks and drags over a PDF viewer, a
+  // cross-origin iframe or a canvas reach us instead of the frame underneath.
+  const setGlass = (on) => {
+    if (ui) ui.glass.style.display = on ? "block" : "none";
+  };
+  // The element under a point, looking through the glass.
+  const under = (x, y) => {
+    if (!ui) return document.elementFromPoint(x, y);
+    const prev = ui.glass.style.pointerEvents;
+    ui.glass.style.pointerEvents = "none";
+    const el = document.elementFromPoint(x, y);
+    ui.glass.style.pointerEvents = prev;
+    return el === host ? null : el;
+  };
+
+  // Lets tests (and the extension) start pin mode where keys go to a plugin, like a PDF viewer.
+  window.__piReviewPin = (on = true) => setPinMode(!!on);
+
   function setPinMode(on) {
     pinMode = on;
+    setGlass(on || !!drag);
     document.documentElement.style.cursor = on ? "crosshair" : "";
     if (!on && !draft && !drag) hideBox();
     render();
@@ -397,12 +434,13 @@
     const [x, y, w, h] = r;
     const els = [];
     for (const fx of [0.1, 0.5, 0.9]) for (const fy of [0.1, 0.5, 0.9]) {
-      const el = document.elementFromPoint(x + w * fx, y + h * fy);
-      if (el && el !== host) els.push(el);
+      const el = under(x + w * fx, y + h * fy);
+      if (el) els.push(el);
     }
     let common = els[0];
     while (common && !els.every((el) => common.contains(el))) common = common.parentElement;
-    const base = describe(common || els[0]) || { tag: "?", text: "", rect: r };
+    const base = (plainDoc ? describe(document.body) : describe(common || els[0])) || { tag: "?", text: "", rect: r };
+    if (plainDoc) return { ...base, rect: r, area: true, inside: [] };
     const inside = [];
     const seen = new Set([keyOf(base)]);
     for (const el of els) {
@@ -456,29 +494,23 @@
     if (ui) ui.marks.textContent = "";
   }
 
-  addEventListener("pointerdown", (e) => {
-    if (ours(e) || e.button !== 0) return;
-    // Clicking elsewhere keeps the pin being written, like leaving a comment box.
-    if (draft) finishDraft(true);
-    if (!pinMode && !e.altKey) return;
+  function gestureDown(e) {
     e.preventDefault();
     e.stopImmediatePropagation();
     drag = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY };
-  }, true);
-  addEventListener("pointermove", (e) => {
-    if (ours(e)) return;
+    setGlass(true);
+  }
+  function gestureMove(e) {
     if (drag) {
       drag.x1 = e.clientX;
       drag.y1 = e.clientY;
       if (dragged(drag)) showBox(toRect(drag), true);
-      return;
-    }
-    if (pinMode && !draft) {
-      const d = describe(e.target);
+    } else if (pinMode && !draft) {
+      const d = describe(under(e.clientX, e.clientY));
       if (d) showBox(d.rect);
     }
-  }, { capture: true, passive: true });
-  addEventListener("pointerup", (e) => {
+  }
+  function gestureUp(e) {
     if (!drag) return;
     e.preventDefault();
     e.stopImmediatePropagation();
@@ -490,10 +522,36 @@
     setPinMode(false);
     if (dragged(d)) draftPin(describeArea(toRect(d)), Date.now(), true, d.x1, d.y1);
     else {
-      const desc = describe(document.elementFromPoint(d.x1, d.y1));
+      const desc = describe(under(d.x1, d.y1));
+      // Inside a PDF there is no element to outline, so mark the spot that was clicked.
+      if (desc && plainDoc) desc.rect = [Math.round(d.x1 - 24), Math.round(d.y1 - 24), 48, 48];
       if (desc) draftPin(desc, Date.now(), false, d.x1, d.y1);
     }
+  }
+
+  // Alt+drag on the page itself; in pin mode the glass receives everything.
+  addEventListener("pointerdown", (e) => {
+    if (ours(e) || e.button !== 0) return;
+    // Clicking elsewhere keeps the pin being written, like leaving a comment box.
+    if (draft) finishDraft(true);
+    if (pinMode || e.altKey) gestureDown(e);
   }, true);
+  addEventListener("pointermove", (e) => {
+    if (!ours(e)) gestureMove(e);
+  }, { capture: true, passive: true });
+  addEventListener("pointerup", (e) => {
+    if (!ours(e)) gestureUp(e);
+  }, true);
+  const onGlass = (type, fn) => ui.glass.addEventListener(type, fn);
+  const bindGlass = () => {
+    onGlass("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      if (draft) finishDraft(true);
+      gestureDown(e);
+    });
+    onGlass("pointermove", gestureMove);
+    onGlass("pointerup", gestureUp);
+  };
   for (const type of ["mousedown", "mouseup", "click", "dblclick"]) {
     addEventListener(type, (e) => {
       if (ours(e) || !(drag || swallowClick || pinMode)) return;
@@ -516,7 +574,7 @@
     mount();
     nav();
     startRrweb();
-    post({ kind: "hello", url: location.href, dpr: devicePixelRatio });
+    post({ kind: "hello", url: location.href, dpr: devicePixelRatio, contentType: document.contentType });
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", ready, { once: true });
   else ready();

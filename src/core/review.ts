@@ -115,6 +115,7 @@ export async function runLiveReview(req: ReviewRequest & { url: string }, renv: 
 		rrweb: outcome.rrweb,
 		clips: outcome.clips,
 		utterances: report.utterances,
+		assets: outcome.assets,
 	}).catch(() => undefined);
 	await Promise.all([
 		writeFile(join(dir, "transcript.json"), JSON.stringify(transcript, null, 2)),

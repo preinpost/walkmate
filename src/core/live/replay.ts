@@ -15,6 +15,8 @@ export async function writeReplay(opts: {
 	rrweb: { tab: number; file: string }[];
 	clips: ClipInfo[];
 	utterances: LiveUtterance[];
+	/** Original URL → saved copy, so images and fonts load without the dev server. */
+	assets?: Record<string, string>;
 }): Promise<string | undefined> {
 	const tabs: { tab: number; events: unknown[] }[] = [];
 	for (const r of opts.rrweb) {
@@ -30,7 +32,9 @@ export async function writeReplay(opts: {
 				}
 			});
 		// The replayer needs a full snapshot to start from.
-		if (events.some((e) => e.type === 2)) tabs.push({ tab: r.tab, events });
+		if (!events.some((e) => e.type === 2)) continue;
+		rewriteAssets(events, opts.assets ?? {});
+		tabs.push({ tab: r.tab, events });
 	}
 	if (!tabs.length) return undefined;
 
@@ -87,7 +91,7 @@ function load(i) {
   if (replayer) { replayer.pause(); replayer.destroy?.(); $("player").innerHTML = ""; }
   const events = D.tabs[i].events;
   first = events[0].timestamp;
-  replayer = new rrweb.Replayer(events, { root: $("player"), mouseTail: { strokeStyle: "#ff3b30" }, showWarning: false, skipInactive: false });
+  replayer = new rrweb.Replayer(events, { root: $("player"), mouseTail: { strokeStyle: "#ff3b30" }, showWarning: false, skipInactive: false, UNSAFE_replayCanvas: true });
   replayer.on("resize", (d) => fit(d.width, d.height));
   $("seek").max = replayer.getMetaData().totalTime;
   playing = false; pos = 0; $("play").textContent = "▶";
@@ -147,6 +151,49 @@ setInterval(() => playing && sync(false), 250);
 	const file = join(opts.dir, "replay.html");
 	await writeFile(file, html);
 	return file;
+}
+
+/**
+ * Point image, font and CSS url() references in the rrweb events at the copies saved during the
+ * review. rrweb records absolute URLs, so a plain lookup is enough.
+ */
+export function rewriteAssets(events: any[], assets: Record<string, string>): void {
+	const map = new Map(Object.entries(assets));
+	if (!map.size) return;
+	const css = (t: string) => t.replace(/url\((['"]?)([^'")]+)\1\)/g, (m, q, u) => (map.has(u) ? `url(${q}${map.get(u)}${q})` : m));
+	const srcset = (v: string) =>
+		v
+			.split(",")
+			.map((part) => {
+				const [u, ...rest] = part.trim().split(/\s+/);
+				return [map.get(u) ?? u, ...rest].join(" ");
+			})
+			.join(", ");
+	const attrs = (a: Record<string, unknown> | undefined) => {
+		if (!a) return;
+		for (const k of ["src", "href", "poster", "xlink:href", "data"]) {
+			const v = a[k];
+			if (typeof v === "string" && map.has(v)) a[k] = map.get(v);
+		}
+		if (typeof a.srcset === "string") a.srcset = srcset(a.srcset);
+		if (typeof a.style === "string") a.style = css(a.style);
+		if (typeof a._cssText === "string") a._cssText = css(a._cssText);
+	};
+	const node = (n: any) => {
+		if (!n) return;
+		attrs(n.attributes);
+		if (n.isStyle && typeof n.textContent === "string") n.textContent = css(n.textContent);
+		for (const c of n.childNodes ?? []) node(c);
+	};
+	for (const e of events) {
+		if (e.type === 2) node(e.data?.node);
+		else if (e.type === 3 && e.data?.source === 0) {
+			for (const a of e.data.adds ?? []) node(a.node);
+			for (const a of e.data.attributes ?? []) attrs(a.attributes);
+		} else if (e.type === 3 && e.data?.source === 8) {
+			for (const r of e.data.adds ?? []) if (typeof r.rule === "string") r.rule = css(r.rule);
+		}
+	}
 }
 
 function esc(s: string): string {

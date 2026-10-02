@@ -79,6 +79,25 @@ Claude Code에서는 MCP 프롬프트로도 시작할 수 있다: `/review-recor
 기본 브라우저에 페이지가 열린다. `R` 또는 **● 녹음**으로 녹음을 켜고 끈다.
 섹션마다 텍스트 코멘트를, 질문에는 선택지 버튼을 쓸 수 있다. 탭을 닫았다면 리뷰 폴더의 `url.txt`로 다시 연다.
 
+## 무엇을 모으나
+
+라이브 리뷰는 rrweb만으로는 남지 않는 것까지 Chrome DevTools Protocol로 브라우저에서 직접 모은다.
+
+| | 저장 | 에이전트에게 |
+|---|---|---|
+| 말 | `clip-*.flac`, `transcript.json` | 발화마다 그때 가리킨 대상 |
+| 화면 행동 | `events.json`, `rrweb-tab*.jsonl` | 포인터, 클릭, 선택, 입력, 스크롤, 페이지 이동, 탭 전환, 핀 |
+| 스크린샷 | `shots/` | 발화와 핀마다 대상에 상자를 그린 것 최대 6장 |
+| 네트워크 | `network.json`, API 응답 본문 `network/` | API 목록, 실패와 느린 요청을 그 발화에 붙여서. 실패 응답은 앞부분 미리보기 |
+| 콘솔 | `console.json` | 오류·경고, 잡히지 않은 예외(소스 파일:줄) |
+| PDF 등 HTML이 아닌 문서 | `docs/` 사본 (blob URL 포함) | 열었다는 것과 사본 경로. 안의 클릭·스크롤은 안 남는다(스크린샷으로 본다) |
+| 이미지·폰트 원본 | `assets/` | 없음. `replay.html`이 원래 주소 대신 사본을 쓴다 |
+| canvas | rrweb (초당 1프레임, `REVIEW_RECORDER_CANVAS_FPS`) | 없음. 재생용 |
+
+요청·응답 헤더는 저장하지 않는다(쿠키, 토큰). 응답 본문은 API(fetch/XHR) 텍스트만 256KB까지 저장한다.
+다른 도메인 iframe은 화면(스크린샷)과 네트워크만 남고, 안의 DOM은 기록하지 않는다.
+핀 모드에서는 투명한 덮개가 페이지를 덮어서 PDF 뷰어나 iframe 위에서도 핀을 찍을 수 있다.
+
 ## MCP 도구
 
 리뷰는 몇 분씩 걸리고 MCP 클라이언트는 도구 호출에 타임아웃이 있어서, 기다리는 도구를 나눴다.
@@ -139,6 +158,7 @@ Claude Code에서는 MCP 프롬프트로도 시작할 수 있다: `/review-recor
 | `REVIEW_RECORDER_OPEN` | | 문서 리뷰: `0`이면 브라우저를 자동으로 열지 않음 |
 | `REVIEW_RECORDER_MIC` | `default` | 마이크 (ffmpeg avfoundation 장치 이름이나 번호) |
 | `REVIEW_RECORDER_MAX_SHOTS` | `6` | 라이브 리뷰 결과에 붙일 스크린샷 수 |
+| `REVIEW_RECORDER_CANVAS_FPS` | `1` | rrweb canvas 기록 초당 프레임. `0`이면 끈다 |
 | `REVIEW_RECORDER_CHROME` | macOS Chrome 경로 | |
 | `REVIEW_RECORDER_CHROME_PROFILE` | `$HOME/chrome-profile` | |
 
@@ -166,10 +186,11 @@ src/pi/     pi 확장 (선택, pi가 TypeScript를 바로 읽는다)
 | `core/types.ts` | 요청 JSON Schema와 검사 |
 | `core/render.ts`, `core/server.ts`, `core/diff.ts`, `core/timeline.ts` | 문서 리뷰 페이지, 127.0.0.1 서버, git diff, 보고서 |
 | `core/live/cdp.ts` | CDP 클라이언트, 전용 프로필 Chrome 실행/재연결 |
-| `core/live/session.ts` | 모든 탭에 스크립트 주입, 이벤트 수신, 녹음 제어, 스크린샷, rrweb 저장 |
+| `core/live/session.ts` | 모든 탭에 스크립트 주입, 이벤트 수신, 활성 탭 추적, 녹음 제어, 스크린샷, rrweb·문서 사본 저장 |
+| `core/live/capture.ts` | 네트워크(요청·응답 본문), 콘솔·예외·브라우저 로그, 이미지·폰트 원본 |
 | `core/live/mic.ts` | ffmpeg 마이크 녹음과 레벨 미터 |
 | `core/live/report.ts` | 이벤트 압축, 발화 ↔ 대상 연결, 스크린샷 선택·표시, 보고서 |
-| `core/live/replay.ts` | rrweb + 음성 동기 재생 페이지 |
+| `core/live/replay.ts` | rrweb + 음성 동기 재생 페이지, 저장한 이미지·폰트로 주소 바꾸기 |
 | `core/page/live.js` | 앱 페이지: 툴바, 포인터·클릭·선택·입력·스크롤·이동 추적, React 컴포넌트·소스 찾기, 핀 |
 | `core/transcribe.ts` | whisper.cpp / OpenAI, 단어 단위 타임스탬프, 무음 클립 제외 |
 | `mcp/server.ts` | MCP 도구 `review_start` / `review_wait` / `review_cancel`, 프롬프트 |
@@ -183,7 +204,7 @@ npm run check                      # tsc
 npm test                           # node --test (MCP 서버 포함)
 npm run build                      # dist/
 node scripts/e2e.ts                # 문서 리뷰: 헤드리스 Chrome + 가짜 마이크(say -v Yuna)
-node scripts/e2e-live.ts           # 라이브 리뷰: 테스트 앱, 핀, 앱 안 이동, 새 탭, 보고서, replay.html
+node scripts/e2e-live.ts           # 라이브 리뷰: 테스트 앱, 핀, 앱 안 이동, 새 탭, API·콘솔, PDF 미리보기, replay.html
 node scripts/e2e-agent.ts claude   # 실제 에이전트(claude, codex, pi)가 MCP로 리뷰를 열고 기다려 결과를 받는지
 ```
 
