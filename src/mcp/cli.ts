@@ -5,23 +5,27 @@ import { mkdir, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { parseArgs } from "node:util";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CHROME_PROFILE, DATA_DIR, WHISPER_MODEL_URL } from "../core/config.ts";
 import { CHROME_BIN } from "../core/live/cdp.ts";
 import { ffmpegRecorder } from "../core/live/mic.ts";
+import { writePlaybook } from "../core/live/playbook.ts";
 import { configFromEnv } from "../core/transcribe.ts";
 import { createReviewServer } from "./server.ts";
 
-const HELP = `review-recorder — 화면을 보며 말로 하는 리뷰를 코딩 에이전트에게 전달
+const HELP = `walkmate — 화면을 보며 말로 하는 리뷰를 코딩 에이전트에게 전달
 
-  review-recorder mcp        stdio MCP 서버 (Claude Code, Codex 등에서 실행)
-  review-recorder doctor     필요한 도구 점검 (--mic: 마이크 2초 녹음 테스트)
-  review-recorder setup      whisper.cpp 모델(약 1.6GB) 내려받기
+  walkmate mcp        stdio MCP 서버 (Claude Code, Codex 등에서 실행)
+  walkmate doctor     필요한 도구 점검 (--mic: 마이크 2초 녹음 테스트)
+  walkmate setup      whisper.cpp 모델(약 1.6GB) 내려받기
+  walkmate playbook <리뷰 폴더> [--from 초] [--to 초] [--title 제목] [--out 폴더]
+                             시연을 playbook.json / playbook.md 초안으로 변환 (자동 실행 없음)
 
-등록 (npm link 안 했으면 review-recorder 대신 node <저장소>/dist/mcp/cli.js):
-  claude mcp add -s user review-recorder -- review-recorder mcp
-  codex mcp add review-recorder -- review-recorder mcp
-  pi mcp add review-recorder --exposure direct -- review-recorder mcp
+등록 (npm link 안 했으면 walkmate 대신 node <저장소>/dist/mcp/cli.js):
+  claude mcp add -s user walkmate -- walkmate mcp
+  codex mcp add walkmate -- walkmate mcp
+  pi mcp add walkmate --exposure direct -- walkmate mcp
 
 데이터: ${DATA_DIR}`;
 
@@ -35,6 +39,23 @@ switch (cmd) {
 		break;
 	case "setup":
 		await setup();
+		break;
+	case "playbook":
+		try {
+			const { values, positionals } = parseArgs({ args, allowPositionals: true, options: {
+				from: { type: "string" }, to: { type: "string" }, title: { type: "string" }, out: { type: "string" },
+			} });
+			if (positionals.length !== 1) throw new Error("playbook에는 리뷰 폴더 하나를 지정하세요.");
+			const result = await writePlaybook(positionals[0], {
+				from: values.from === undefined ? undefined : Number(values.from),
+				to: values.to === undefined ? undefined : Number(values.to),
+				title: values.title, out: values.out,
+			});
+			console.log(`플레이북 초안 ${result.playbook.steps.length}단계\n${result.json}\n${result.markdown}\n실행 전에 단계와 완료 조건을 검토하세요.`);
+		} catch (err) {
+			console.error(err instanceof Error ? err.message : String(err));
+			process.exitCode = 2;
+		}
 		break;
 	default:
 		console.log(HELP);
@@ -80,12 +101,12 @@ async function doctor(testMic: boolean): Promise<boolean> {
 	const model = existsSync(cfg.whisperModel);
 	const openai = !!cfg.openaiKey;
 	if (whisper && model) line(true, `받아쓰기: whisper.cpp (${cfg.whisperModel})`);
-	else if (openai) line("warn", "받아쓰기: OpenAI whisper-1 (OPENAI_API_KEY)", "로컬로 하려면: brew install whisper-cpp && review-recorder setup");
+	else if (openai) line("warn", "받아쓰기: OpenAI whisper-1 (OPENAI_API_KEY)", "로컬로 하려면: brew install whisper-cpp && walkmate setup");
 	else
 		line(
 			false,
 			`받아쓰기 엔진 없음 (whisper-cli ${whisper ? "있음" : "없음"}, 모델 ${model ? "있음" : "없음"})`,
-			[!whisper && "brew install whisper-cpp", !model && "review-recorder setup", "또는 OPENAI_API_KEY 설정"].filter(Boolean).join(" · "),
+			[!whisper && "brew install whisper-cpp", !model && "walkmate setup", "또는 OPENAI_API_KEY 설정"].filter(Boolean).join(" · "),
 		);
 
 	line(true, `리뷰 브라우저 프로필: ${CHROME_PROFILE}`);
@@ -107,7 +128,7 @@ async function doctor(testMic: boolean): Promise<boolean> {
 			await rm(file, { force: true });
 		}
 	} else if (!testMic) {
-		console.log("  (마이크까지 확인하려면: review-recorder doctor --mic)");
+		console.log("  (마이크까지 확인하려면: walkmate doctor --mic)");
 	}
 	return ok;
 }

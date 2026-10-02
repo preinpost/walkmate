@@ -1,7 +1,15 @@
 {
-  "name": "review-recorder",
+  "name": "walkmate",
   "version": "0.2.0",
-  "description": "Voice review for coding agents: open the running app or a review page, talk through it, and the agent gets your words tied to what you pointed at. MCP server for Claude Code / Codex, plus a pi extension.",
+  "description": "Record walkthroughs and voice feedback for coding agents, then turn demonstrations into reviewable playbooks. Agent-independent MCP server with an optional pi extension.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/preinpost/walkmate.git"
+  },
+  "homepage": "https://github.com/preinpost/walkmate#readme",
+  "bugs": {
+    "url": "https://github.com/preinpost/walkmate/issues"
+  },
   "type": "module",
   "private": true,
   "keywords": [
@@ -9,12 +17,15 @@
     "mcp",
     "review",
     "voice",
+    "walkthrough",
+    "playbook",
     "rrweb"
   ],
   "engines": {
     "node": ">=22"
   },
   "bin": {
+    "walkmate": "./dist/mcp/cli.js",
     "review-recorder": "./dist/mcp/cli.js"
   },
   "files": [

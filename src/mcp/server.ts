@@ -51,7 +51,7 @@ export function createReviewServer(opts: { cwd?: string } = {}) {
 	const jobs = new Map<string, Job>();
 	let seq = 0;
 	const server = new Server(
-		{ name: "review-recorder", version: "0.2.0" },
+		{ name: "walkmate", version: "0.2.0" },
 		{ capabilities: { tools: {}, prompts: {} }, instructions: INSTRUCTIONS },
 	);
 

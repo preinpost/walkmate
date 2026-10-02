@@ -13,15 +13,15 @@ const work = mkdtempSync(join(tmpdir(), "prr-agent-work-"));
 const cli = new URL("../dist/mcp/cli.js", import.meta.url).pathname;
 const serverEnv = { REVIEW_RECORDER_HOME: home, REVIEW_RECORDER_OPEN: "0", REVIEW_RECORDER_TRANSCRIBER: "none", REVIEW_RECORDER_WAIT_SEC: "10" };
 
-// E2E_PROMPT replaces the request, e.g. "/review-recorder:review_changes" to test the MCP prompt.
+// E2E_PROMPT replaces the request, e.g. "/walkmate:review_changes" to test the MCP prompt.
 const custom = process.env.E2E_PROMPT;
 const prompt =
 	custom ??
-	"review-recorder MCP 도구로 문서 리뷰를 열어줘. 제목은 '만료 정책', 섹션은 하나: id q1, kind question, title '토큰 만료 시간?', options ['15분', '1시간']. " +
+	"walkmate MCP 도구로 문서 리뷰를 열어줘. 제목은 '만료 정책', 섹션은 하나: id q1, kind question, title '토큰 만료 시간?', options ['15분', '1시간']. " +
 	"그다음 review_wait로 피드백이 올 때까지 기다려. 피드백을 받으면 사용자가 고른 답과 코멘트를 한 줄로만 알려줘. 다른 작업은 하지 마.";
 
 // pi uses the server registered in ~/.pi/agent/mcp.json, which inherits this process's environment:
-//   pi mcp add review-recorder --exposure direct -- node <repo>/dist/mcp/cli.js mcp
+//   pi mcp add walkmate --exposure direct -- node <repo>/dist/mcp/cli.js mcp
 const [cmd, args] =
 	agent === "pi"
 		? ["pi", ["--print", "--no-session", prompt]]
@@ -43,8 +43,8 @@ const [cmd, args] =
 				[
 					"-p", prompt,
 					"--strict-mcp-config",
-					"--mcp-config", JSON.stringify({ mcpServers: { "review-recorder": { command: "node", args: [cli, "mcp"], env: serverEnv } } }),
-					"--allowedTools", "mcp__review-recorder__review_start,mcp__review-recorder__review_wait",
+					"--mcp-config", JSON.stringify({ mcpServers: { "walkmate": { command: "node", args: [cli, "mcp"], env: serverEnv } } }),
+					"--allowedTools", "mcp__walkmate__review_start,mcp__walkmate__review_wait",
 				],
 			];
 

@@ -1,7 +1,10 @@
-# review-recorder
+# Walkmate
 
-실행 중인 앱이나 리뷰 페이지를 보면서 말로 리뷰하면, 음성과 "그때 무엇을 가리키고 있었는지"가
-하나의 타임라인으로 합쳐져 코딩 에이전트에게 돌아간다. stdio MCP 서버라서 Claude Code, Codex, pi 어디서든 같은 방식으로 쓴다.
+**Show once. Let your agent check again.**
+
+앱을 사용하는 과정을 보여 주고 말로 설명하면, 행동·음성·화면·네트워크를 같은 시간축으로 기록해 코딩 에이전트에게 전달한다.
+녹화에서 플레이북 초안을 만들 수 있고, 에이전트는 이 자료를 바탕으로 재사용할 skill이나 테스트 코드를 작성할 수 있다.
+stdio MCP 서버라서 Claude Code, Codex, pi 등 특정 에이전트에 종속되지 않는다.
 
 - **라이브 리뷰**: 앱(예: `http://localhost:5173/dashboard`)을 리뷰 전용 Chrome 창에서 열고, 직접 써 보면서 말한다.
   발화마다 그때 가리킨 요소, React 컴포넌트, 소스 파일과 줄, 스크린샷이 붙는다. rrweb로 화면과 음성을 다시 재생할 수 있다.
@@ -14,8 +17,8 @@
 ```bash
 brew install ffmpeg whisper-cpp            # Chrome, Node 22 이상도 필요
 
-git clone <이 저장소> ~/dev/review-recorder
-cd ~/dev/review-recorder
+git clone https://github.com/preinpost/walkmate.git ~/dev/walkmate
+cd ~/dev/walkmate
 npm install                                # dist/ 빌드까지 된다
 
 node dist/mcp/cli.js setup                 # whisper 모델(약 1.6GB)을 ~/.review-recorder/models 에 받는다
@@ -26,23 +29,23 @@ whisper.cpp 대신 OpenAI `whisper-1`을 쓰려면 MCP 서버 환경에 `OPENAI_
 
 ## MCP 서버 등록
 
-서버 명령은 `node ~/dev/review-recorder/dist/mcp/cli.js mcp` 하나다. 클라이언트마다 한 번 등록한다.
+서버 명령은 `node ~/dev/walkmate/dist/mcp/cli.js mcp` 하나다. 클라이언트마다 한 번 등록한다.
 
 ```bash
-REPO=~/dev/review-recorder
+REPO=~/dev/walkmate
 
 # Claude Code (-s user: 모든 프로젝트에서)
-claude mcp add -s user review-recorder -- node $REPO/dist/mcp/cli.js mcp
+claude mcp add -s user walkmate -- node $REPO/dist/mcp/cli.js mcp
 
 # Codex
-codex mcp add review-recorder -- node $REPO/dist/mcp/cli.js mcp
+codex mcp add walkmate -- node $REPO/dist/mcp/cli.js mcp
 
 # pi: 기본 노출(codemode)이 아니라 direct 로 등록해야 모델이 도구를 바로 본다
-pi mcp add review-recorder --exposure direct -- node $REPO/dist/mcp/cli.js mcp
+pi mcp add walkmate --exposure direct -- node $REPO/dist/mcp/cli.js mcp
 ```
 
 확인은 Claude Code·pi에서 `/mcp`, 셸에서 `codex mcp list` / `pi mcp list`. 도구 세 개(`review_start`, `review_wait`,
-`review_cancel`)가 보이면 된다. `npm link`를 해 두면 `node $REPO/dist/mcp/cli.js` 대신 `review-recorder`로 써도 된다.
+`review_cancel`)가 보이면 된다. `npm link`를 해 두면 `node $REPO/dist/mcp/cli.js` 대신 `walkmate`로 써도 된다.
 
 코드를 고친 뒤에는 `npm run build`를 하고 클라이언트를 다시 시작한다(pi는 `/reload`). MCP 서버는 세션이 시작될 때 뜬다.
 
@@ -54,7 +57,7 @@ pi mcp add review-recorder --exposure direct -- node $REPO/dist/mcp/cli.js mcp
 - "방금 한 작업 리뷰 페이지로 보여줘"
 
 에이전트가 `review_start`로 리뷰를 열고, 끝날 때까지 `review_wait`를 반복 호출한 뒤, 피드백대로 작업한다.
-Claude Code에서는 MCP 프롬프트로도 시작할 수 있다: `/review-recorder:live_review <url>`, `/review-recorder:review_changes`.
+Claude Code에서는 MCP 프롬프트로도 시작할 수 있다: `/walkmate:live_review <url>`, `/walkmate:review_changes`.
 
 ### 라이브 리뷰
 
@@ -78,6 +81,44 @@ Claude Code에서는 MCP 프롬프트로도 시작할 수 있다: `/review-recor
 
 기본 브라우저에 페이지가 열린다. `R` 또는 **● 녹음**으로 녹음을 켜고 끈다.
 섹션마다 텍스트 코멘트를, 질문에는 선택지 버튼을 쓸 수 있다. 탭을 닫았다면 리뷰 폴더의 `url.txt`로 다시 연다.
+
+## 시연을 플레이북으로 변환 (시제품)
+
+사람이 보여 준 절차를 에이전트에게 전달하려면, 제출한 **라이브 리뷰 폴더**를 플레이북 초안으로 변환한다.
+브라우저를 열거나 행동을 자동 실행하지 않으며, LLM이나 외부 API 호출 없이 로컬 파일만 읽는다.
+
+```bash
+# 저장소에서 빌드한 뒤 실행. REVIEW에는 events.json이 있는 라이브 리뷰 폴더를 지정한다.
+npm run build
+REVIEW="$HOME/.review-recorder/reviews/mcp/<녹화 시각>"
+node dist/mcp/cli.js playbook "$REVIEW" --from 42 --to 50 --title "시연한 작업"
+```
+
+결과는 `$REVIEW/playbook/playbook.json`과 `playbook.md`에 저장된다. 기본값은 녹화 전체이며,
+`--from`·`--to`는 녹화 시작부터 경과한 초다(`0 <= from < to <= duration`). `--out <폴더>`로 출력 폴더를 바꿀 수 있다.
+기존 초안은 덮어쓰지 않는다. 다시 생성할 때는 다른 출력 폴더를 지정한다. 원본 녹화 파일은 수정하지 않는다.
+
+초안에는 다음 정보가 있다.
+
+- 클릭·입력·스크롤 단계와 작업 전 URL, React 컴포넌트·소스 위치
+- testid·역할/이름·글자·짧은 CSS 설명을 활용한 **요소 탐색 후보**
+- 단계 직후 최대 2초 안에 관찰된 주소 변화·새 탭·문서 MIME·API 메타데이터. 다음 같은 탭의 행동이나 선택 구간 끝에서 연결을 끊는다.
+- 입력 이벤트에서 만든 매개변수 후보와 음성·핀 메모. 가려진 입력값은 새로 제공해야 한다.
+- 단계마다 확인해야 할 사항. 모든 결과는 `status: "draft"`다.
+
+**관찰된 변화는 확정된 완료 조건이 아니다.** testid는 상위 컨테이너의 값일 수 있고, 역할과 접근성 이름은
+기록된 태그·글자에서 추정한다. 탐색 동작이나 잘못 누른 동작을 자동으로 삭제하지 않으며, 문서 종류가 없는
+`blob:` 새 탭을 PDF라고 단정하지 않는다. 특수 키·파일 업로드·드래그는 아직 단계로 변환하지 않는다.
+
+에이전트에게 `playbook.md`를 읽히고 다음을 먼저 정리하게 한다.
+
+1. 목적에 필요한 단계만 선택한다. 범위가 넓으면 시간을 좁혀 다시 생성한다.
+2. 다른 고객사·기간에 적용할 입력값과 URL·행에 포함된 ID를 매개변수로 바꾼다.
+3. 현재 DOM에서 요소를 찾고, 여러 개가 일치하면 행·컨테이너로 범위를 제한한다.
+4. 각 단계의 성공 판정과 대기 조건을 확정한다. 저장·발행·삭제·결제는 승인 없이 실행하지 않는다.
+
+이 시제품에는 실행 에이전트나 시연/실행 비교 기능이 없다. 고객 정보·URL·메모는 초안에도 포함될 수 있으므로
+외부 공유 전에 확인한다. 네트워크 요청/응답 본문은 초안에 복사하지 않는다.
 
 ## 무엇을 모으나
 
@@ -144,6 +185,15 @@ Claude Code에서는 MCP 프롬프트로도 시작할 수 있다: `/review-recor
 원본(녹음, 이벤트, 스크린샷, rrweb, 보고서)은 `~/.review-recorder/reviews/<세션>/<시각>/`에 남는다.
 라이브 리뷰의 `replay.html`을 열면 rrweb 화면과 녹음이 같이 재생되고, 발화 목록을 누르면 그 시점으로 간다.
 
+## 기존 review-recorder 사용자
+
+프로젝트명과 새 CLI 이름은 `walkmate`다. 기존 `review-recorder` 실행 이름도 유지하며,
+MCP 도구 이름(`review_start`·`review_wait`·`review_cancel`)은 바꾸지 않았다.
+기존 MCP 등록 이름도 그대로 쓸 수 있다. 새로 등록하는 경우에는 위 예시처럼 `walkmate`를 사용한다.
+
+녹화·모델·Chrome 로그인 프로필을 그대로 사용하도록 기본 데이터 폴더 `~/.review-recorder`와
+`REVIEW_RECORDER_*` 환경 변수는 유지한다. 저장소 디렉터리를 옮겼다면 MCP 서버 명령의 경로도 갱신해야 한다.
+
 ## 설정 (환경 변수)
 
 | 변수 | 기본값 | |
@@ -168,8 +218,8 @@ pi에서는 MCP 대신 확장으로도 쓸 수 있다. 같은 엔진을 쓰고, 
 `/review <url>`·`/review` 명령과 진행 위젯이 있다. MCP 서버와 같이 켜면 도구가 겹치니 둘 중 하나만 쓴다.
 
 ```bash
-pi -e ~/dev/review-recorder        # 한 번만
-pi install ~/dev/review-recorder   # 계속
+pi -e ~/dev/walkmate        # 한 번만
+pi install ~/dev/walkmate   # 계속
 ```
 
 ## 구조
@@ -191,10 +241,11 @@ src/pi/     pi 확장 (선택, pi가 TypeScript를 바로 읽는다)
 | `core/live/mic.ts` | ffmpeg 마이크 녹음과 레벨 미터 |
 | `core/live/report.ts` | 이벤트 압축, 발화 ↔ 대상 연결, 스크린샷 선택·표시, 보고서 |
 | `core/live/replay.ts` | rrweb + 음성 동기 재생 페이지, 저장한 이미지·폰트로 주소 바꾸기 |
+| `core/live/playbook.ts` | 저장된 라이브 리뷰에서 실행 전 검토용 JSON·Markdown 플레이북 초안 생성 |
 | `core/page/live.js` | 앱 페이지: 툴바, 포인터·클릭·선택·입력·스크롤·이동 추적, React 컴포넌트·소스 찾기, 핀 |
 | `core/transcribe.ts` | whisper.cpp / OpenAI, 단어 단위 타임스탬프, 무음 클립 제외 |
 | `mcp/server.ts` | MCP 도구 `review_start` / `review_wait` / `review_cancel`, 프롬프트 |
-| `mcp/cli.ts` | CLI: `mcp`(서버), `doctor`(점검), `setup`(모델 받기) |
+| `mcp/cli.ts` | CLI: `mcp`(서버), `doctor`(점검), `setup`(모델 받기), `playbook`(시연 변환) |
 | `pi/index.ts` | pi 도구 `request_review`, `/review`, 위젯 |
 
 ## 개발
