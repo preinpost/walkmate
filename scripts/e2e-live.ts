@@ -128,31 +128,33 @@ try {
 		await cdp("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
 		await cdp("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
 	};
-	const altKey = (code: string, key: string) =>
+	// The toolbar shortcuts use Cmd on macOS and Alt elsewhere (CDP modifiers: Alt=1, Meta=4).
+	const mod = process.platform === "darwin" ? 4 : 1;
+	const modKey = (code: string, key: string) =>
 		Promise.all(
-			["keyDown", "keyUp"].map((type) => cdp("Input.dispatchKeyEvent", { type, modifiers: 1, code, key, windowsVirtualKeyCode: key.toUpperCase().charCodeAt(0) })),
+			["keyDown", "keyUp"].map((type) => cdp("Input.dispatchKeyEvent", { type, modifiers: mod, code, key, windowsVirtualKeyCode: key.toUpperCase().charCodeAt(0) })),
 		);
 
 	for (let i = 0; i < 50 && !(await js("!!document.querySelector('pi-review-toolbar')")); i++) await sleep(100);
 	console.log("toolbar mounted:", await js("!!document.querySelector('pi-review-toolbar')"));
 
-	await altKey("KeyR", "r"); // start recording
+	await modKey("KeyR", "r"); // start recording
 	await sleep(300);
 	await move("#legend li");
 	await sleep(3400);
-	await altKey("KeyP", "p"); // pin mode
+	await modKey("KeyP", "p"); // pin mode
 	await sleep(200);
 	await click("#num");
 	await sleep(300);
 	await cdp("Input.insertText", { text: "오른쪽 정렬" });
 	await cdp("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
 	await sleep(2400);
-	// Area pin: Alt+drag around the legend and the table, the way a person frames them, then a memo.
+	// Area pin: Cmd/Alt+drag around the legend and the table, the way a person frames them, then a memo.
 	const [x0, y0, x1, y1] = await js(`(() => { const a = document.querySelector("#legend").getBoundingClientRect(), b = document.querySelector("table").getBoundingClientRect(); return [Math.min(a.left, b.left) - 12, a.top - 8, b.right + 16, b.bottom + 10]; })()`);
-	await cdp("Input.dispatchMouseEvent", { type: "mousePressed", x: x0, y: y0, button: "left", buttons: 1, clickCount: 1, modifiers: 1 });
+	await cdp("Input.dispatchMouseEvent", { type: "mousePressed", x: x0, y: y0, button: "left", buttons: 1, clickCount: 1, modifiers: mod });
 	for (let i = 1; i <= 5; i++)
-		await cdp("Input.dispatchMouseEvent", { type: "mouseMoved", x: x0 + ((x1 - x0) * i) / 5, y: y0 + ((y1 - y0) * i) / 5, buttons: 1, modifiers: 1 });
-	await cdp("Input.dispatchMouseEvent", { type: "mouseReleased", x: x1, y: y1, button: "left", buttons: 0, clickCount: 1, modifiers: 1 });
+		await cdp("Input.dispatchMouseEvent", { type: "mouseMoved", x: x0 + ((x1 - x0) * i) / 5, y: y0 + ((y1 - y0) * i) / 5, buttons: 1, modifiers: mod });
+	await cdp("Input.dispatchMouseEvent", { type: "mouseReleased", x: x1, y: y1, button: "left", buttons: 0, clickCount: 1, modifiers: mod });
 	await sleep(300);
 	await cdp("Input.insertText", { text: "간격 넓히기" });
 	await cdp("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });

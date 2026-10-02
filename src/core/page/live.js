@@ -12,6 +12,11 @@
     try { window.__piReview(JSON.stringify(msg)); } catch {}
   };
   const ev = (type, data = {}) => post({ kind: "ev", at: Date.now(), type, ...data });
+  // Toolbar shortcuts use Cmd on macOS and Alt elsewhere.
+  const MAC = /mac|iphone|ipad/i.test(navigator.userAgentData?.platform || navigator.platform);
+  const MOD = MAC ? "Cmd" : "Alt";
+  const modHeld = (e) => (MAC ? e.metaKey : e.altKey);
+  const modOnly = (e) => modHeld(e) && !e.ctrlKey && !(MAC ? e.altKey : e.metaKey);
   const throttle = (fn, ms) => {
     let last = 0, timer;
     return (...a) => {
@@ -297,8 +302,8 @@
         <div class="toast"></div>
         <div class="panel" hidden></div>
         <div class="bar">
-          <button class="rec" title="Alt+R">● 녹음</button><span class="time">0:00</span><span class="lvl"><i></i></span>
-          <button class="pin" title="Alt+P. 클릭하면 요소, 드래그하면 영역을 핀으로. Alt+드래그는 언제든 영역 핀">📌 핀</button>
+          <button class="rec" title="${MOD}+R">● 녹음</button><span class="time">0:00</span><span class="lvl"><i></i></span>
+          <button class="pin" title="${MOD}+P. 클릭하면 요소, 드래그하면 영역을 핀으로. ${MOD}+드래그는 언제든 영역 핀">📌 핀</button>
           <button class="pts" hidden>포인트</button>
           <button class="submit primary">제출</button>
           <button class="cancel" title="리뷰 취소">✕</button>
@@ -372,8 +377,8 @@
   };
 
   // ---------- Pins: click an element or drag an area, then type a memo next to it ----------
-  // In pin mode (📌 or Alt+P) a click pins the element under the pointer and a drag pins an area.
-  // Alt+drag pins an area at any time. Pins stay outlined on the page until it navigates away.
+  // In pin mode (📌 or Cmd/Alt+P) a click pins the element under the pointer and a drag pins an area.
+  // Cmd/Alt+drag pins an area at any time. Pins stay outlined on the page until it navigates away.
 
   const DRAG_MIN = 6;
   let drag = null; // { x0, y0, x1, y1 } while the pointer is down for a pin
@@ -531,12 +536,12 @@
     }
   }
 
-  // Alt+drag on the page itself; in pin mode the glass receives everything.
+  // Cmd/Alt+drag on the page itself; in pin mode the glass receives everything.
   addEventListener("pointerdown", (e) => {
     if (ours(e) || e.button !== 0) return;
     // Clicking elsewhere keeps the pin being written, like leaving a comment box.
     if (draft) finishDraft(true);
-    if (pinMode || e.altKey) gestureDown(e);
+    if (pinMode || modHeld(e)) gestureDown(e);
   }, true);
   addEventListener("pointermove", (e) => {
     if (!ours(e)) gestureMove(e);
@@ -566,8 +571,8 @@
   }, true);
 
   addEventListener("keydown", (e) => {
-    if (e.altKey && !e.metaKey && !e.ctrlKey && e.code === "KeyR") { e.preventDefault(); post({ kind: "cmd", cmd: "rec" }); }
-    else if (e.altKey && !e.metaKey && !e.ctrlKey && e.code === "KeyP") { e.preventDefault(); setPinMode(!pinMode); }
+    if (modOnly(e) && e.code === "KeyR") { e.preventDefault(); post({ kind: "cmd", cmd: "rec" }); }
+    else if (modOnly(e) && e.code === "KeyP") { e.preventDefault(); setPinMode(!pinMode); }
     else if (e.key === "Escape" && draft) finishDraft(false);
     else if (e.key === "Escape" && pinMode) setPinMode(false);
   }, true);
