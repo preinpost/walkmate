@@ -5,8 +5,7 @@
     "outDir": "dist",
     "rootDir": "src",
     "rewriteRelativeImportExtensions": true,
-    "sourceMap": false,
-    "paths": {}
+    "sourceMap": false
   },
   "include": ["src/core/**/*.ts", "src/mcp/**/*.ts"]
 }

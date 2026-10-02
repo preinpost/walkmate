@@ -162,6 +162,7 @@ function pickShot(all: Shot[], u: LiveUtterance): Shot | undefined {
 
 export async function buildLiveReport(input: LiveReportInput): Promise<LiveReport> {
 	const { outcome } = input;
+	const warnings = [...outcome.warnings, ...input.warnings];
 	const events = compressLive(outcome.events, outcome.duration);
 	const utterances = attributeLive(groupUtterances(input.words), events);
 	const net = outcome.network ?? [];
@@ -215,10 +216,16 @@ export async function buildLiveReport(input: LiveReportInput): Promise<LiveRepor
 		if (chosen.size >= input.maxShots) break;
 		if (chosen.has(w.shot.file)) continue;
 		const n = chosen.size + 1;
-		const file = join(shotDir, `shot-${n}.jpg`);
+		let file = join(shotDir, `shot-${n}.jpg`);
 		// Mark the element only if it was touched close to when the screenshot was taken.
 		const rect = w.d && w.at !== undefined && Math.abs(w.at - w.shot.t) < 3 ? w.d.rect : undefined;
-		await annotate(w.shot, rect, file).catch(() => undefined);
+		try {
+			await annotate(w.shot, rect, file);
+		} catch {
+			file = w.shot.file;
+			const warning = "스크린샷 가공을 하지 못해 원본 스크린샷을 첨부합니다. ffmpeg가 있으면 대상 표시와 축소를 적용합니다.";
+			if (!warnings.includes(warning)) warnings.push(warning);
+		}
 		chosen.set(w.shot.file, { n, t: w.t, caption: w.caption, file });
 	}
 	const shotNo = (s?: Shot) => (s ? chosen.get(s.file)?.n : undefined);
@@ -234,7 +241,7 @@ export async function buildLiveReport(input: LiveReportInput): Promise<LiveRepor
 		const docsN = (outcome.docs ?? []).length;
 		head.push(`- 네트워크 요청 ${net.length} (실패 ${fails}) · 콘솔 오류 ${errs}${docsN ? ` · 열어 본 파일 ${docsN}` : ""}`);
 	}
-	for (const w of [...outcome.warnings, ...input.warnings]) head.push(`- ⚠ ${w}`);
+	for (const w of warnings) head.push(`- ⚠ ${w}`);
 	head.push(`- 원본: ${input.dir}  (replay.html 로 화면과 음성을 같이 재생)`);
 	if (!utterances.length && !pins.length) head.push("", "리뷰어가 말이나 핀 없이 제출했습니다. 아래 타임라인에는 화면에서 한 행동만 있습니다.");
 

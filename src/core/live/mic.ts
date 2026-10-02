@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { env } from "../config.ts";
+import { ffmpegInstallHint } from "../dependencies.ts";
 
 export interface Recording {
 	/** Epoch ms of the first captured sample. */
@@ -66,6 +67,10 @@ export const ffmpegRecorder: Recorder = (file, onLevel) => {
 			proc.kill("SIGKILL");
 			reject(new Error(`마이크가 응답하지 않습니다. ${stderr.trim()}`));
 		}, 8000);
+		proc.once("error", (err) => {
+			clearTimeout(timer);
+			reject(new Error(`마이크를 시작하지 못했습니다 (${err.message}). ${ffmpegInstallHint()}`));
+		});
 		exited.then((code) => {
 			clearTimeout(timer);
 			if (startedAt === undefined) reject(new Error(`마이크를 열지 못했습니다 (ffmpeg ${code}): ${stderr.trim() || "권한을 확인하세요"}`));

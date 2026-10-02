@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { env, MODELS_DIR, WHISPER_MODEL_NAME } from "./config.ts";
+import { findExecutable } from "./dependencies.ts";
 import type { ClipInfo, Word } from "./types.ts";
 
 export interface TranscribeConfig {
@@ -63,7 +64,7 @@ export async function transcribeClips(clips: ClipInfo[], cfg: TranscribeConfig, 
 }
 
 async function pickEngine(cfg: TranscribeConfig, warnings: string[]): Promise<"whisper-cpp" | "openai" | "none"> {
-	const whisperReady = async () => existsSync(cfg.whisperModel) && (await run("which", [cfg.whisperBin]).then(() => true, () => false));
+	const whisperReady = async () => existsSync(cfg.whisperModel) && !!(await findExecutable(cfg.whisperBin));
 	switch (cfg.engine) {
 		case "none":
 			return "none";

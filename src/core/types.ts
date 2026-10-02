@@ -1,4 +1,4 @@
-// Plain JSON Schema so every adapter can use it: pi wraps it for TypeBox, MCP sends it as is.
+// Plain JSON Schema shared by request validation and the MCP server.
 
 const SECTION_KINDS = ["decision", "question", "diff", "note"] as const;
 
@@ -32,10 +32,10 @@ export const SectionSchema = {
 	},
 	required: ["id", "kind", "title"],
 	additionalProperties: false,
-} as const;
+};
 
 export const ReviewParamsSchema = {
-	type: "object",
+	type: "object" as const,
 	properties: {
 		title: { type: "string", description: "What is being reviewed, in a few words." },
 		url: {
@@ -54,7 +54,7 @@ export const ReviewParamsSchema = {
 	},
 	required: ["title"],
 	additionalProperties: false,
-} as const;
+};
 
 export interface Section {
 	id: string;

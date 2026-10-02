@@ -12,22 +12,63 @@ stdio MCP 서버라서 Claude Code, Codex, pi 등 특정 에이전트에 종속�
 
 [ETOOMANYTHINGS? Run Fewer Agents](https://blog.exe.dev/etoomanythings)의 DOM 녹화 아이디어에서 출발했다.
 
-## 설치 (macOS)
+## 기본 설치
+
+**음성은 선택 기능이다.** 마이크를 사용하지 않으면 ffmpeg·whisper.cpp·음성 모델을 설치하지 않아도 된다.
+Node 22 이상과 Git이 필요하며, 라이브 리뷰에는 Chrome도 필요하다.
 
 ```bash
-brew install ffmpeg whisper-cpp            # Chrome, Node 22 이상도 필요
-
-git clone https://github.com/preinpost/walkmate.git ~/dev/walkmate
-cd ~/dev/walkmate
+git clone https://github.com/preinpost/walkmate.git
+cd walkmate
 npm install                                # dist/ 빌드까지 된다
-
-node dist/mcp/cli.js setup                 # whisper 모델(약 1.6GB)을 ~/.review-recorder/models 에 받는다
-node dist/mcp/cli.js doctor --mic          # 점검. 처음이면 macOS가 터미널 앱에 마이크 권한을 묻는다
+node dist/mcp/cli.js doctor                 # Node·Chrome만 점검한다
 ```
 
-whisper.cpp 대신 OpenAI `whisper-1`을 쓰려면 MCP 서버 환경에 `OPENAI_API_KEY`가 있으면 된다.
+이 상태로 클릭·입력·이동·핀 메모·네트워크 기록과 플레이북 생성을 사용할 수 있다.
+마이크는 **● 녹음**을 눌렀을 때만 사용한다. 도구나 OS 권한이 없으면 안내를 표시하며, 화면 기록은 계속된다.
+ffmpeg가 없으면 보고서에 대상 표시·축소를 적용하지 않은 원본 스크린샷을 첨부한다.
+
+### 음성을 사용할 때만 설치
+
+라이브 마이크 녹음에는 **ffmpeg**, 로컬 전사에는 추가로 **whisper.cpp와 모델**이 필요하다.
+도구나 모델은 Walkmate가 자동으로 설치하지 않는다.
+
+| OS | ffmpeg | 로컬 전사 |
+|---|---|---|
+| macOS | `brew install ffmpeg` | `brew install whisper-cpp` 후 아래 `setup` 실행 |
+| Ubuntu/Debian | `sudo apt install ffmpeg` | [whisper.cpp 설치 안내](https://github.com/ggml-org/whisper.cpp)를 따라 `whisper-cli` 준비 |
+| 다른 Linux | 배포판 패키지 관리자로 ffmpeg 설치 | 같은 whisper.cpp 설치 안내 사용 |
+| Windows | [FFmpeg Windows 빌드](https://ffmpeg.org/download.html) 설치 후 `ffmpeg.exe`를 PATH에 추가 | whisper.cpp 설치 안내를 따라 `whisper-cli.exe` 준비 |
+
+```bash
+# 로컬 전사를 선택했을 때만: 모델 약 1.6GB를 내려받는다.
+node dist/mcp/cli.js setup
+node dist/mcp/cli.js doctor --voice          # 도구·모델 점검. 마이크는 열지 않는다.
+node dist/mcp/cli.js doctor --mic            # 위 점검 + 마이크 2초 녹음. OS 권한이 필요하다.
+```
+
+`whisper-cli`가 PATH에 없다면 `REVIEW_RECORDER_WHISPER_BIN`에 실행 파일 경로를 지정한다.
+로컬 whisper.cpp 대신 OpenAI `whisper-1`을 선택하려면 MCP 서버 환경에 `OPENAI_API_KEY`와
+`REVIEW_RECORDER_TRANSCRIBER=openai`를 설정한다. **이 경우 녹음 파일을 OpenAI에 전송한다.**
+기본값 `auto`는 로컬 엔진이 준비되지 않았고 API 키가 있으면 OpenAI를 사용한다.
+전사 없이 녹음 파일만 저장하려면 `REVIEW_RECORDER_TRANSCRIBER=none`을 설정한다.
+
+### OS별 마이크 설정
+
+- **macOS:** AVFoundation을 사용한다. 기본 장치는 `default`이며, 터미널 앱에 마이크 권한을 허용해야 한다.
+- **Linux:** PulseAudio 입력을 사용한다. PulseAudio 또는 PipeWire의 PulseAudio 호환 서비스가 필요하다.
+  `REVIEW_RECORDER_MIC`에는 `default`나 입력 소스 이름을 지정한다. CI·헤드리스 환경에서는 마이크를 사용하지 않아도 된다.
+- **Windows:** DirectShow를 사용한다. `ffmpeg -list_devices true -f dshow -i dummy`로 오디오 장치 이름을 확인하고,
+  MCP 서버 환경의 `REVIEW_RECORDER_MIC`에 실제 장치 이름을 지정한다(`default`가 자동 선택된다고 가정하지 않는다).
+
+문서 리뷰는 브라우저의 MediaRecorder로 녹음한다. ffmpeg는 로컬 전사와 무음 검사에 사용되며,
+`doctor --voice`·`--mic`는 라이브 리뷰용 ffmpeg 녹음 경로를 점검한다.
+Windows/Linux용 입력 방식과 설치 안내는 제공하지만, 실제 마이크·권한·브라우저 동작은 각 OS에서 별도 검증이 필요하다.
 
 ## MCP 서버 등록
+
+MCP SDK v2의 `@modelcontextprotocol/server`를 사용한다. `@modelcontextprotocol/client`는 테스트용 개발 의존성이다.
+SDK를 교체해도 도구 이름과 등록 명령은 동일하다.
 
 서버 명령은 `node ~/dev/walkmate/dist/mcp/cli.js mcp` 하나다. 클라이언트마다 한 번 등록한다.
 
@@ -66,7 +107,7 @@ Claude Code에서는 MCP 프롬프트로도 시작할 수 있다: `/walkmate:liv
 
 | | |
 |---|---|
-| **● 녹음** `Alt+R` | 마이크 녹음 켜기/끄기. 페이지를 이동하거나 새로고침해도 끊기지 않는다 |
+| **● 녹음** `Alt+R` | 선택 기능. ffmpeg가 있으면 마이크 녹음 켜기/끄기. 페이지 이동·새로고침 중에도 유지 |
 | **📌 핀** `Alt+P` | 핀 모드에서 클릭하면 그 요소, 드래그하면 그 영역을 "여기"로 지정한다(앱에는 전달되지 않음) |
 | `Alt+드래그` | 핀 모드가 아니어도 바로 영역 핀 |
 | **포인트** | 에이전트가 준 리뷰 포인트. 누르면 "지금 이 포인트 이야기 중"으로 표시 |
@@ -128,7 +169,7 @@ node dist/mcp/cli.js playbook "$REVIEW" --from 42 --to 50 --title "시연한 작
 |---|---|---|
 | 말 | `clip-*.flac`, `transcript.json` | 발화마다 그때 가리킨 대상 |
 | 화면 행동 | `events.json`, `rrweb-tab*.jsonl` | 포인터, 클릭, 선택, 입력, 스크롤, 페이지 이동, 탭 전환, 핀 |
-| 스크린샷 | `shots/` | 발화와 핀마다 대상에 상자를 그린 것 최대 6장 |
+| 스크린샷 | `shots/` | 발화와 핀마다 최대 6장. ffmpeg가 있으면 대상 표시·축소, 없으면 원본 |
 | 네트워크 | `network.json`, API 응답 본문 `network/` | API 목록, 실패와 느린 요청을 그 발화에 붙여서. 실패 응답은 앞부분 미리보기 |
 | 콘솔 | `console.json` | 오류·경고, 잡히지 않은 예외(소스 파일:줄) |
 | PDF 등 HTML이 아닌 문서 | `docs/` 사본 (blob URL 포함) | 열었다는 것과 사본 경로. 안의 클릭·스크롤은 안 남는다(스크린샷으로 본다) |
@@ -171,8 +212,8 @@ node dist/mcp/cli.js playbook "$REVIEW" --from 42 --to 50 --title "시연한 작
    보이는 글자: "Compute Storage 서비스 1,234,000원"
 ```
 
-뒤에 전체 타임라인(페이지 이동, 포인터, 클릭, 입력, 스크롤)이 오고, 대상에 빨간 상자를 그린 스크린샷이
-최대 6장 붙는다. 컴포넌트와 파일은 React 개발 빌드의 디버그 정보에서 찾는다(프로덕션 빌드에서는 생략된다).
+뒤에 전체 타임라인(페이지 이동, 포인터, 클릭, 입력, 스크롤)이 오고, 스크린샷이 최대 6장 붙는다.
+ffmpeg가 있으면 대상에 빨간 상자를 표시하고, 없으면 원본을 첨부한다. 컴포넌트와 파일은 React 개발 빌드의 디버그 정보에서 찾는다(프로덕션 빌드에서는 생략된다).
 
 문서 리뷰:
 
@@ -191,6 +232,10 @@ node dist/mcp/cli.js playbook "$REVIEW" --from 42 --to 50 --title "시연한 작
 MCP 도구 이름(`review_start`·`review_wait`·`review_cancel`)은 바꾸지 않았다.
 기존 MCP 등록 이름도 그대로 쓸 수 있다. 새로 등록하는 경우에는 위 예시처럼 `walkmate`를 사용한다.
 
+전용 pi 확장은 제거했다. 확장에서 제공하던 `/review` 명령·`request_review` 도구·진행 위젯 대신
+MCP의 `review_start`·`review_wait`·`review_cancel`을 사용한다. pi도 위 MCP 등록 방식으로 계속 사용할 수 있다.
+이전에 `pi install`로 확장을 등록했다면 해당 설치 선언을 제거하고 MCP로 등록한다.
+
 녹화·모델·Chrome 로그인 프로필을 그대로 사용하도록 기본 데이터 폴더 `~/.review-recorder`와
 `REVIEW_RECORDER_*` 환경 변수는 유지한다. 저장소 디렉터리를 옮겼다면 MCP 서버 명령의 경로도 갱신해야 한다.
 
@@ -206,34 +251,24 @@ MCP 도구 이름(`review_start`·`review_wait`·`review_cancel`)은 바꾸지 �
 | `REVIEW_RECORDER_TIMEOUT_MIN` | `60` | 리뷰 제한 시간. `0`이면 무제한 |
 | `REVIEW_RECORDER_WAIT_SEC` | `45` | MCP `review_wait` 한 번의 대기. 클라이언트 도구 타임아웃보다 짧게 |
 | `REVIEW_RECORDER_OPEN` | | 문서 리뷰: `0`이면 브라우저를 자동으로 열지 않음 |
-| `REVIEW_RECORDER_MIC` | `default` | 마이크 (ffmpeg avfoundation 장치 이름이나 번호) |
+| `REVIEW_RECORDER_MIC` | `default` | macOS: AVFoundation 장치, Linux: PulseAudio 소스, Windows: 실제 DirectShow 오디오 장치 이름 |
 | `REVIEW_RECORDER_MAX_SHOTS` | `6` | 라이브 리뷰 결과에 붙일 스크린샷 수 |
 | `REVIEW_RECORDER_CANVAS_FPS` | `1` | rrweb canvas 기록 초당 프레임. `0`이면 끈다 |
-| `REVIEW_RECORDER_CHROME` | macOS Chrome 경로 | |
+| `REVIEW_RECORDER_CHROME` | OS별 Chrome 경로 또는 `google-chrome` | 기본값으로 찾지 못하면 실행 파일 경로 지정 |
 | `REVIEW_RECORDER_CHROME_PROFILE` | `$HOME/chrome-profile` | |
-
-## pi 확장 (선택)
-
-pi에서는 MCP 대신 확장으로도 쓸 수 있다. 같은 엔진을 쓰고, 도구 하나(`request_review`)가 제출될 때까지 기다리며,
-`/review <url>`·`/review` 명령과 진행 위젯이 있다. MCP 서버와 같이 켜면 도구가 겹치니 둘 중 하나만 쓴다.
-
-```bash
-pi -e ~/dev/walkmate        # 한 번만
-pi install ~/dev/walkmate   # 계속
-```
 
 ## 구조
 
 ```
-src/core/   에이전트와 무관한 리뷰 엔진
+src/core/   에이전트와 무관한 시연·리뷰 엔진
 src/mcp/    stdio MCP 서버와 CLI (dist/로 빌드)
-src/pi/     pi 확장 (선택, pi가 TypeScript를 바로 읽는다)
 ```
 
 | 파일 | 역할 |
 |---|---|
 | `core/review.ts` | 한 번의 리뷰: 열기 → 대기 → 받아쓰기 → 보고서 (문서·라이브). 호스트는 `ReviewEnv`로 연결 |
 | `core/types.ts` | 요청 JSON Schema와 검사 |
+| `core/dependencies.ts` | OS별 실행 파일 탐색과 선택 음성 도구 설치 안내 |
 | `core/render.ts`, `core/server.ts`, `core/diff.ts`, `core/timeline.ts` | 문서 리뷰 페이지, 127.0.0.1 서버, git diff, 보고서 |
 | `core/live/cdp.ts` | CDP 클라이언트, 전용 프로필 Chrome 실행/재연결 |
 | `core/live/session.ts` | 모든 탭에 스크립트 주입, 이벤트 수신, 활성 탭 추적, 녹음 제어, 스크린샷, rrweb·문서 사본 저장 |
@@ -246,17 +281,16 @@ src/pi/     pi 확장 (선택, pi가 TypeScript를 바로 읽는다)
 | `core/transcribe.ts` | whisper.cpp / OpenAI, 단어 단위 타임스탬프, 무음 클립 제외 |
 | `mcp/server.ts` | MCP 도구 `review_start` / `review_wait` / `review_cancel`, 프롬프트 |
 | `mcp/cli.ts` | CLI: `mcp`(서버), `doctor`(점검), `setup`(모델 받기), `playbook`(시연 변환) |
-| `pi/index.ts` | pi 도구 `request_review`, `/review`, 위젯 |
 
 ## 개발
 
 ```bash
 npm run check                      # tsc
-npm test                           # node --test (MCP 서버 포함)
+npm test                           # node --test (MCP 서버 포함, ffmpeg가 없으면 무음 전사 테스트만 skip)
 npm run build                      # dist/
-node scripts/e2e.ts                # 문서 리뷰: 헤드리스 Chrome + 가짜 마이크(say -v Yuna)
-node scripts/e2e-live.ts           # 라이브 리뷰: 테스트 앱, 핀, 앱 안 이동, 새 탭, API·콘솔, PDF 미리보기, replay.html
+node scripts/e2e.ts                # 선택 macOS 음성 통합 테스트: Chrome + ffmpeg + say -v Yuna
+node scripts/e2e-live.ts           # 선택 macOS 라이브 통합 테스트: 같은 음성 도구 + API·콘솔·PDF·replay.html
 node scripts/e2e-agent.ts claude   # 실제 에이전트(claude, codex, pi)가 MCP로 리뷰를 열고 기다려 결과를 받는지
 ```
 
-`tsconfig.json`의 `paths`는 이 머신의 전역 pi 설치 경로를 가리킨다(pi 확장 타입 검사용). 다른 곳에서는 고쳐야 한다.
+타입 검사와 빌드에는 전역 pi 설치나 머신별 타입 경로가 필요하지 않다.

@@ -5,10 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import { writePlaybook } from "../src/core/live/playbook.ts";
 
 const exec = promisify(execFile);
-const cli = new URL("../src/mcp/cli.ts", import.meta.url).pathname;
+const cli = fileURLToPath(new URL("../src/mcp/cli.ts", import.meta.url));
 const target = (tag: string, text: string, testid?: string) => ({ tag, text, testid, rect: [0, 0, 100, 30] });
 
 async function fixture(t: { after(fn: () => Promise<void>): void }, recording: object): Promise<string> {

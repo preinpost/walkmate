@@ -1,23 +1,25 @@
 #!/usr/bin/env node
-import { execFile } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { parseArgs } from "node:util";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { CHROME_PROFILE, DATA_DIR, WHISPER_MODEL_URL } from "../core/config.ts";
+import { findExecutable, ffmpegInstallHint, whisperInstallHint } from "../core/dependencies.ts";
 import { CHROME_BIN } from "../core/live/cdp.ts";
 import { ffmpegRecorder } from "../core/live/mic.ts";
 import { writePlaybook } from "../core/live/playbook.ts";
 import { configFromEnv } from "../core/transcribe.ts";
 import { createReviewServer } from "./server.ts";
 
-const HELP = `walkmate — 화면을 보며 말로 하는 리뷰를 코딩 에이전트에게 전달
+const HELP = `walkmate — 시연 기록과 피드백을 코딩 에이전트에게 전달
 
   walkmate mcp        stdio MCP 서버 (Claude Code, Codex 등에서 실행)
-  walkmate doctor     필요한 도구 점검 (--mic: 마이크 2초 녹음 테스트)
+  walkmate doctor     기본 도구 점검 (음성 도구는 선택)
+  walkmate doctor --voice  음성 녹음·전사 도구 점검
+  walkmate doctor --mic    음성 도구 점검 + 마이크 2초 녹음 테스트
   walkmate setup      whisper.cpp 모델(약 1.6GB) 내려받기
   walkmate playbook <리뷰 폴더> [--from 초] [--to 초] [--title 제목] [--out 폴더]
                              시연을 playbook.json / playbook.md 초안으로 변환 (자동 실행 없음)
@@ -35,7 +37,7 @@ switch (cmd) {
 		await serve();
 		break;
 	case "doctor":
-		process.exitCode = (await doctor(args.includes("--mic"))) ? 0 : 1;
+		process.exitCode = (await doctor(args.includes("--mic"), args.includes("--voice") || args.includes("--mic"))) ? 0 : 1;
 		break;
 	case "setup":
 		await setup();
@@ -80,7 +82,7 @@ async function serve() {
 	await server.connect(new StdioServerTransport());
 }
 
-async function doctor(testMic: boolean): Promise<boolean> {
+async function doctor(testMic: boolean, checkVoice: boolean): Promise<boolean> {
 	let ok = true;
 	const line = (pass: boolean | "warn", what: string, hint?: string) => {
 		if (pass === false) ok = false;
@@ -90,26 +92,25 @@ async function doctor(testMic: boolean): Promise<boolean> {
 	const major = Number(process.versions.node.split(".")[0]);
 	line(major >= 22, `Node ${process.versions.node}`, major >= 22 ? undefined : "Node 22 이상이 필요합니다");
 
-	const ffmpeg = await which("ffmpeg");
-	line(!!ffmpeg, ffmpeg ? `ffmpeg (${ffmpeg})` : "ffmpeg 없음", ffmpeg ? undefined : "brew install ffmpeg");
-
-	const chrome = existsSync(CHROME_BIN) || (!CHROME_BIN.includes("/") && (await which(CHROME_BIN)));
+	const chrome = existsSync(CHROME_BIN) || (await findExecutable(CHROME_BIN));
 	line(!!chrome, chrome ? `Chrome (${CHROME_BIN})` : `Chrome 없음: ${CHROME_BIN}`, chrome ? undefined : "Chrome을 설치하거나 REVIEW_RECORDER_CHROME 으로 경로 지정");
 
-	const cfg = configFromEnv();
-	const whisper = await which(cfg.whisperBin);
-	const model = existsSync(cfg.whisperModel);
-	const openai = !!cfg.openaiKey;
-	if (whisper && model) line(true, `받아쓰기: whisper.cpp (${cfg.whisperModel})`);
-	else if (openai) line("warn", "받아쓰기: OpenAI whisper-1 (OPENAI_API_KEY)", "로컬로 하려면: brew install whisper-cpp && walkmate setup");
-	else
-		line(
-			false,
-			`받아쓰기 엔진 없음 (whisper-cli ${whisper ? "있음" : "없음"}, 모델 ${model ? "있음" : "없음"})`,
-			[!whisper && "brew install whisper-cpp", !model && "walkmate setup", "또는 OPENAI_API_KEY 설정"].filter(Boolean).join(" · "),
-		);
-
 	line(true, `리뷰 브라우저 프로필: ${CHROME_PROFILE}`);
+	if (!checkVoice) {
+		console.log("  음성은 선택 기능입니다. 필요한 경우 walkmate doctor --voice 또는 --mic 으로 점검하세요.");
+		return ok;
+	}
+
+	const ffmpeg = await findExecutable("ffmpeg");
+	line(!!ffmpeg, ffmpeg ? `ffmpeg (${ffmpeg})` : "ffmpeg 없음", ffmpeg ? undefined : ffmpegInstallHint());
+
+	const cfg = configFromEnv();
+	const whisper = await findExecutable(cfg.whisperBin);
+	const model = existsSync(cfg.whisperModel);
+	if (cfg.engine === "none") line("warn", "받아쓰기 꺼짐: 녹음 파일만 저장합니다 (REVIEW_RECORDER_TRANSCRIBER=none)");
+	else if (cfg.engine !== "openai" && whisper && model) line(true, `받아쓰기: whisper.cpp (${cfg.whisperModel})`);
+	else if (cfg.engine !== "whisper-cpp" && cfg.openaiKey) line("warn", "받아쓰기: OpenAI whisper-1 (녹음이 OpenAI로 전송됩니다)", `로컬로 하려면: ${whisperInstallHint()}`);
+	else line(false, `받아쓰기 엔진 없음 (whisper-cli ${whisper ? "있음" : "없음"}, 모델 ${model ? "있음" : "없음"})`, `${whisperInstallHint()} 또는 OPENAI_API_KEY 설정`);
 
 	if (testMic && ffmpeg) {
 		const file = `${DATA_DIR}/mic-test.flac`;
@@ -121,7 +122,7 @@ async function doctor(testMic: boolean): Promise<boolean> {
 			await new Promise((r) => setTimeout(r, 2000));
 			await rec.stop();
 			const db = peak > 0 ? 20 * Math.log10(peak) : -Infinity;
-			line(db > -50, `마이크 최대 음량 ${db.toFixed(0)}dB`, db > -50 ? undefined : "무음입니다. 시스템 설정 > 개인정보 보호 > 마이크에서 터미널 앱을 허용하세요");
+			line(db > -50, `마이크 최대 음량 ${db.toFixed(0)}dB`, db > -50 ? undefined : "무음입니다. OS 마이크 권한과 REVIEW_RECORDER_MIC 입력 장치를 확인하세요");
 		} catch (err) {
 			line(false, "마이크", err instanceof Error ? err.message : String(err));
 		} finally {
@@ -135,7 +136,7 @@ async function doctor(testMic: boolean): Promise<boolean> {
 
 async function setup() {
 	const cfg = configFromEnv();
-	if (!(await which(cfg.whisperBin))) console.log(`whisper-cli 가 없습니다. 먼저 설치하세요: brew install whisper-cpp`);
+	if (!(await findExecutable(cfg.whisperBin))) console.log(`whisper-cli 가 없습니다. ${whisperInstallHint()}`);
 	if (existsSync(cfg.whisperModel)) {
 		console.log(`모델이 이미 있습니다: ${cfg.whisperModel}`);
 		return;
@@ -160,10 +161,4 @@ async function setup() {
 	await pipeline(body, createWriteStream(part));
 	await rename(part, cfg.whisperModel);
 	console.log("\n완료");
-}
-
-function which(bin: string): Promise<string | undefined> {
-	return new Promise((resolve) => {
-		execFile(process.platform === "win32" ? "where" : "which", [bin], (err, stdout) => resolve(err ? undefined : stdout.trim().split("\n")[0]));
-	});
 }

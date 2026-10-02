@@ -1,11 +1,4 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-	CallToolRequestSchema,
-	type CallToolResult,
-	GetPromptRequestSchema,
-	ListPromptsRequestSchema,
-	ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { Server, type CallToolResult, type ListToolsResult } from "@modelcontextprotocol/server";
 import { env } from "../core/config.ts";
 import { type ReviewOutcome, runAnyReview } from "../core/review.ts";
 import { parseReviewRequest, ReviewParamsSchema } from "../core/types.ts";
@@ -55,14 +48,14 @@ export function createReviewServer(opts: { cwd?: string } = {}) {
 		{ capabilities: { tools: {}, prompts: {} }, instructions: INSTRUCTIONS },
 	);
 
-	server.setRequestHandler(ListToolsRequestSchema, async () => ({
+	server.setRequestHandler("tools/list", async (): Promise<ListToolsResult> => ({
 		tools: [
 			{
 				name: "review_start",
 				description:
 					"Open a voice review for the user and return its id immediately. Pass url for a live review of the running app, " +
 					"or sections (decision, question, diff, note) for a document review. Then call review_wait until it returns the feedback.",
-				inputSchema: START_SCHEMA as any,
+				inputSchema: START_SCHEMA,
 			},
 			{
 				name: "review_wait",
@@ -84,7 +77,7 @@ export function createReviewServer(opts: { cwd?: string } = {}) {
 		],
 	}));
 
-	server.setRequestHandler(CallToolRequestSchema, async (request, extra): Promise<CallToolResult> => {
+	server.setRequestHandler("tools/call", async (request, ctx): Promise<CallToolResult> => {
 		const args = (request.params.arguments ?? {}) as Record<string, unknown>;
 		try {
 			switch (request.params.name) {
@@ -92,10 +85,10 @@ export function createReviewServer(opts: { cwd?: string } = {}) {
 					return await start(args);
 				case "review_wait": {
 					const progressToken = request.params._meta?.progressToken;
-					return await wait(String(args.id ?? ""), Number(args.timeout_sec ?? WAIT_SEC), extra.signal, (message, elapsed) => {
+					return await wait(String(args.id ?? ""), Number(args.timeout_sec ?? WAIT_SEC), ctx.mcpReq.signal, (message, elapsed) => {
 						if (progressToken === undefined) return;
-						extra
-							.sendNotification({ method: "notifications/progress", params: { progressToken, progress: elapsed, message } })
+						ctx.mcpReq
+							.notify({ method: "notifications/progress", params: { progressToken, progress: elapsed, message } })
 							.catch(() => {});
 					});
 				}
@@ -186,7 +179,7 @@ export function createReviewServer(opts: { cwd?: string } = {}) {
 		return text(`Review ${id} cancelled.`);
 	}
 
-	server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+	server.setRequestHandler("prompts/list", async () => ({
 		prompts: [
 			{
 				name: "live_review",
@@ -204,7 +197,7 @@ export function createReviewServer(opts: { cwd?: string } = {}) {
 		],
 	}));
 
-	server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+	server.setRequestHandler("prompts/get", async (request) => {
 		const a = request.params.arguments ?? {};
 		const focus = a.focus ? ` Focus: ${a.focus}.` : "";
 		const prompt =

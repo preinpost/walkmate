@@ -1,7 +1,7 @@
 {
   "name": "walkmate",
   "version": "0.2.0",
-  "description": "Record walkthroughs and voice feedback for coding agents, then turn demonstrations into reviewable playbooks. Agent-independent MCP server with an optional pi extension.",
+  "description": "Record walkthroughs and voice feedback for coding agents, then turn demonstrations into reviewable playbooks. Agent-independent MCP server.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/preinpost/walkmate.git"
@@ -13,7 +13,6 @@
   "type": "module",
   "private": true,
   "keywords": [
-    "pi-package",
     "mcp",
     "review",
     "voice",
@@ -33,40 +32,20 @@
     "src",
     "README.md"
   ],
-  "pi": {
-    "extensions": [
-      "./src/pi/index.ts"
-    ]
-  },
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && node -e \"require('fs').cpSync('src/core/page','dist/core/page',{recursive:true})\"",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && node -e \"require('fs').cpSync('src/core/page','dist/core/page',{recursive:true})\"",
     "prepare": "npm run build",
     "check": "tsc --noEmit",
     "test": "node --test test/*.test.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.31.0",
+    "@modelcontextprotocol/server": "^2.2.0",
     "@rrweb/record": "^2.1.6",
     "marked": "^16.0.0",
     "rrweb": "^2.1.6"
   },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*",
-    "typebox": "*"
-  },
-  "peerDependenciesMeta": {
-    "@earendil-works/pi-coding-agent": {
-      "optional": true
-    },
-    "@earendil-works/pi-tui": {
-      "optional": true
-    },
-    "typebox": {
-      "optional": true
-    }
-  },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.2.0",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0"
   }
