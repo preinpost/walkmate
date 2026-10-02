@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { transcribeClips } from "../src/transcribe.ts";
+import { transcribeClips } from "../src/core/transcribe.ts";
 
 test("skips silent clips instead of letting whisper invent text", async () => {
 	const file = join(mkdtempSync(join(tmpdir(), "prr-")), "clip-0.webm");

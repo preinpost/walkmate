@@ -6,11 +6,11 @@ import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadDiffs, renderPage } from "../src/render.ts";
-import { newToken, startReviewServer } from "../src/server.ts";
-import { buildReport } from "../src/timeline.ts";
-import { configFromEnv, transcribeClips } from "../src/transcribe.ts";
-import type { ReviewRequest } from "../src/types.ts";
+import { loadDiffs, renderPage } from "../src/core/render.ts";
+import { newToken, startReviewServer } from "../src/core/server.ts";
+import { buildReport } from "../src/core/timeline.ts";
+import { configFromEnv, transcribeClips } from "../src/core/transcribe.ts";
+import type { ReviewRequest } from "../src/core/types.ts";
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const dir = mkdtempSync(join(tmpdir(), "prr-e2e-"));

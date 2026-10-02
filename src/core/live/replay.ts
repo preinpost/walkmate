@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { ClipInfo } from "../types.ts";
+import { distFile } from "./assets.ts";
 import type { LiveUtterance } from "./report.ts";
 
 /**
@@ -34,8 +34,8 @@ export async function writeReplay(opts: {
 	}
 	if (!tabs.length) return undefined;
 
-	const lib = readFileSync(new URL("../../node_modules/rrweb/dist/rrweb.umd.min.cjs", import.meta.url), "utf8");
-	const css = readFileSync(new URL("../../node_modules/rrweb/dist/style.min.css", import.meta.url), "utf8");
+	const lib = distFile("rrweb", "rrweb.umd.min.cjs");
+	const css = distFile("rrweb", "style.min.css");
 	const data = {
 		title: opts.title,
 		t0: opts.t0,

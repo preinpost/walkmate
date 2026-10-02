@@ -1,22 +1,40 @@
 {
-  "name": "pi-review-recorder",
-  "version": "0.1.0",
-  "description": "Pi extension: the agent opens a review page, you talk through it, and the voice + what you were looking at comes back as one timeline.",
+  "name": "review-recorder",
+  "version": "0.2.0",
+  "description": "Voice review for coding agents: open the running app or a review page, talk through it, and the agent gets your words tied to what you pointed at. MCP server for Claude Code / Codex, plus a pi extension.",
   "type": "module",
   "private": true,
   "keywords": [
-    "pi-package"
+    "pi-package",
+    "mcp",
+    "review",
+    "voice",
+    "rrweb"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "review-recorder": "./dist/mcp/cli.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
   ],
   "pi": {
     "extensions": [
-      "./src/index.ts"
+      "./src/pi/index.ts"
     ]
   },
   "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && node -e \"require('fs').cpSync('src/core/page','dist/core/page',{recursive:true})\"",
+    "prepare": "npm run build",
     "check": "tsc --noEmit",
     "test": "node --test test/*.test.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "@rrweb/record": "^2.1.6",
     "marked": "^16.0.0",
     "rrweb": "^2.1.6"
@@ -25,6 +43,17 @@
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
     "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

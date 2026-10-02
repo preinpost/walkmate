@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { env } from "../config.ts";
 
 type Listener = (params: any, sessionId?: string) => void;
 
@@ -73,7 +74,7 @@ export interface Browser {
 }
 
 export const CHROME_BIN =
-	process.env.PI_REVIEW_CHROME ??
+	env("CHROME") ??
 	(process.platform === "darwin"
 		? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 		: process.platform === "win32"
@@ -96,7 +97,7 @@ export async function launchChrome(opts: { userDataDir: string; headless?: boole
 	}
 	await rm(portFile, { force: true });
 
-	if (!existsSync(CHROME_BIN) && CHROME_BIN.includes("/")) throw new Error(`Chrome을 찾지 못했습니다: ${CHROME_BIN} (PI_REVIEW_CHROME로 지정)`);
+	if (!existsSync(CHROME_BIN) && CHROME_BIN.includes("/")) throw new Error(`Chrome을 찾지 못했습니다: ${CHROME_BIN} (REVIEW_RECORDER_CHROME로 지정)`);
 	const proc = spawn(
 		CHROME_BIN,
 		[

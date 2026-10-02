@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { collectDiff, parseUnifiedDiff } from "../src/diff.ts";
+import { collectDiff, parseUnifiedDiff } from "../src/core/diff.ts";
 
 test("parses hunks with line numbers", () => {
 	const files = parseUnifiedDiff(

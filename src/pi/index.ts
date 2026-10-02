@@ -1,8 +1,12 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { collectDiff } from "./diff.ts";
-import { type ReviewOutcome, runLiveReview, runReview } from "./review.ts";
-import { type ReviewDetails, ReviewParams, type ReviewRequest, type Section } from "./types.ts";
+import { collectDiff } from "../core/diff.ts";
+import { type ReviewOutcome, runAnyReview } from "../core/review.ts";
+import { type ReviewDetails, ReviewParamsSchema, type ReviewRequest, type Section } from "../core/types.ts";
+import { Type } from "typebox";
+
+const ReviewParams = Type.Unsafe<ReviewRequest>(ReviewParamsSchema);
+const WIDGET = "review-recorder";
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
@@ -18,10 +22,33 @@ export default function reviewRecorder(pi: ExtensionAPI) {
 		active.clear();
 	});
 
-	const review = (ctx: ExtensionContext, req: ReviewRequest, signal?: AbortSignal, onStatus?: (s: string) => void) => {
-		if (req.url) return runLiveReview({ ctx, req: { ...req, url: req.url }, signal, onStatus, track });
-		if (!req.sections?.length) throw new Error("sections is required for a document review (or pass url for a live review).");
-		return runReview({ ctx, req, signal, onStatus, track });
+	const review = async (ctx: ExtensionContext, req: ReviewRequest, signal?: AbortSignal, onStatus?: (s: string) => void) => {
+		const openaiKey = await ctx.modelRegistry.getApiKeyForProvider("openai").catch(() => undefined);
+		try {
+			return await runAnyReview(req, {
+				cwd: ctx.cwd,
+				group: ctx.sessionManager.getSessionId(),
+				openaiKey,
+				signal,
+				onStatus,
+				track,
+				onWaiting: ({ url, title, live }) => {
+					if (!ctx.hasUI) return;
+					ctx.ui.setWidget(
+						WIDGET,
+						live
+							? [
+									`🎙 라이브 리뷰 중 · ${title}`,
+									`   ${url}`,
+									"   리뷰 창 오른쪽 아래 툴바: ● 녹음(Alt+R) · 📌 핀(Alt+P) · 제출. 창을 닫아도 제출됩니다. Esc로 중단.",
+								]
+							: [`🎙 리뷰 대기 중 · ${title}`, `   ${url}`, "   브라우저에서 제출하거나 취소하세요. Esc로 중단합니다."],
+					);
+				},
+			});
+		} finally {
+			if (ctx.hasUI) ctx.ui.setWidget(WIDGET, undefined);
+		}
 	};
 
 	pi.registerTool({

@@ -3,6 +3,7 @@ import { createWriteStream, readFileSync, type WriteStream } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ClipInfo } from "../types.ts";
+import { distFile } from "./assets.ts";
 import { type Browser, launchChrome } from "./cdp.ts";
 import type { Recorder, Recording } from "./mic.ts";
 
@@ -96,7 +97,7 @@ interface Tab {
 const BINDING = "__piReview";
 
 function pageScript(): string {
-	const rrweb = readFileSync(new URL("../../node_modules/@rrweb/record/dist/record.umd.min.cjs", import.meta.url), "utf8");
+	const rrweb = distFile("@rrweb/record", "record.umd.min.cjs");
 	const live = readFileSync(new URL("../page/live.js", import.meta.url), "utf8");
 	// Load the UMD bundle as a CommonJS module so it does not touch the app's globals.
 	return `(function(){if(window.top!==window||window.__piRrweb||location.href==="about:blank")return;var module={exports:{}};var exports=module.exports;\n${rrweb}\n;window.__piRrweb=module.exports;})();\n${live}`;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildReport, compressEvents, groupUtterances } from "../src/timeline.ts";
-import type { ReviewEvent } from "../src/types.ts";
+import { buildReport, compressEvents, groupUtterances } from "../src/core/timeline.ts";
+import type { ReviewEvent } from "../src/core/types.ts";
 
 test("groups words into utterances at pauses", () => {
 	const u = groupUtterances([

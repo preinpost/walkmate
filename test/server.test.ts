@@ -3,8 +3,8 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { renderPage } from "../src/render.ts";
-import { newToken, startReviewServer } from "../src/server.ts";
+import { renderPage } from "../src/core/render.ts";
+import { newToken, startReviewServer } from "../src/core/server.ts";
 
 test("serves the page, stores clips, resolves on submit", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "prr-"));

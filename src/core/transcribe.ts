@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { env, MODELS_DIR, WHISPER_MODEL_NAME } from "./config.ts";
 import type { ClipInfo, Word } from "./types.ts";
 
 export interface TranscribeConfig {
@@ -20,15 +20,15 @@ export interface Transcript {
 	warnings: string[];
 }
 
-export const DEFAULT_WHISPER_MODEL = join(homedir(), ".pi", "agent", "review-recorder", "models", "ggml-large-v3-turbo.bin");
+export const DEFAULT_WHISPER_MODEL = join(MODELS_DIR, WHISPER_MODEL_NAME);
 
 export function configFromEnv(openaiKey?: string): TranscribeConfig {
 	return {
-		engine: process.env.PI_REVIEW_TRANSCRIBER ?? "auto",
-		lang: process.env.PI_REVIEW_LANG ?? "ko",
-		whisperBin: process.env.PI_REVIEW_WHISPER_BIN ?? "whisper-cli",
-		whisperModel: process.env.PI_REVIEW_WHISPER_MODEL ?? DEFAULT_WHISPER_MODEL,
-		openaiKey: process.env.OPENAI_API_KEY ?? openaiKey,
+		engine: env("TRANSCRIBER") ?? "auto",
+		lang: env("LANG") ?? "ko",
+		whisperBin: env("WHISPER_BIN") ?? "whisper-cli",
+		whisperModel: env("WHISPER_MODEL") ?? DEFAULT_WHISPER_MODEL,
+		openaiKey: process.env.OPENAI_API_KEY || openaiKey,
 	};
 }
 

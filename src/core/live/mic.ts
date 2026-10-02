@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { env } from "../config.ts";
 
 export interface Recording {
 	/** Epoch ms of the first captured sample. */
@@ -16,7 +17,7 @@ const LEVEL_RATE = 8000;
  * One output is the clip; a second, low-rate raw stream feeds the level meter.
  */
 export const ffmpegRecorder: Recorder = (file, onLevel) => {
-	const device = process.env.PI_REVIEW_MIC ?? "default";
+	const device = env("MIC") ?? "default";
 	const input =
 		process.platform === "darwin"
 			? ["-f", "avfoundation", "-i", `:${device}`]

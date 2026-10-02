@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { attributeLive, compressLive, describeTarget } from "../src/live/report.ts";
-import type { Desc, LiveEvent } from "../src/live/session.ts";
+import { attributeLive, compressLive, describeTarget } from "../src/core/live/report.ts";
+import type { Desc, LiveEvent } from "../src/core/live/session.ts";
 
 const d = (text: string, comps?: string[]): Desc => ({ tag: "div", text, comps, rect: [0, 0, 10, 10] });
 

@@ -9,11 +9,11 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildLiveReport } from "../src/live/report.ts";
-import { writeReplay } from "../src/live/replay.ts";
-import { runLiveSession } from "../src/live/session.ts";
-import type { Recorder } from "../src/live/mic.ts";
-import { configFromEnv, transcribeClips } from "../src/transcribe.ts";
+import { buildLiveReport } from "../src/core/live/report.ts";
+import { writeReplay } from "../src/core/live/replay.ts";
+import { runLiveSession } from "../src/core/live/session.ts";
+import type { Recorder } from "../src/core/live/mic.ts";
+import { configFromEnv, transcribeClips } from "../src/core/transcribe.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "prr-live-"));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
