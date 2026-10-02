@@ -1,6 +1,6 @@
 // Injected into every page of the review browser before the app's own scripts run.
 // Reports what the reviewer points at, clicks, selects, types and scrolls through, and shows a
-// small floating toolbar. Everything goes to the extension through the __piReview CDP binding;
+// small floating toolbar. Everything goes to the recorder through the __piReview CDP binding;
 // times are epoch ms so events from every tab share one clock with the microphone.
 (() => {
   // A new tab first loads about:blank and then reuses that same window for the real page, so
@@ -162,7 +162,7 @@
   addEventListener("change", (e) => {
     const el = e.target;
     if (ours(e) || !(el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement)) return;
-    const secret = el.type === "password" || el.type === "hidden" || /pass|secret|token|card/i.test(el.name || "");
+    const secret = window.__piReviewCfg?.maskAllInputs || el.type === "password" || el.type === "hidden" || /pass|secret|token|card/i.test(el.name || "");
     const value = el.type === "checkbox" || el.type === "radio" ? String(el.checked) : secret ? "••••" : clean(el.value).slice(0, 120);
     ev("input", { d: describe(el), value });
   }, true);
@@ -211,6 +211,7 @@
         sampling: { mousemove: 50, scroll: 150, input: "last", canvas: canvasFps || undefined },
         recordCanvas: canvasFps > 0,
         dataURLOptions: { type: "image/webp", quality: 0.6 },
+        maskAllInputs: !!window.__piReviewCfg?.maskAllInputs,
         maskInputOptions: { password: true },
         inlineStylesheet: true,
         blockSelector: "[data-pi-review]",
@@ -224,6 +225,7 @@
       post({ kind: "rr", events: buf });
       buf = [];
     };
+    window.__piReviewFlush = flush;
     setInterval(flush, 1000);
     addEventListener("pagehide", flush);
   };

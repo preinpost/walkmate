@@ -4,11 +4,17 @@
 
 앱을 사용하는 과정을 보여 주고 말로 설명하면, 행동·음성·화면·네트워크를 같은 시간축으로 기록해 코딩 에이전트에게 전달한다.
 녹화에서 플레이북 초안을 만들 수 있고, 에이전트는 이 자료를 바탕으로 재사용할 skill이나 테스트 코드를 작성할 수 있다.
+에이전트는 Walkmate의 실행 기능으로 실제 앱에서 절차를 수행하고, 그 실행 과정도 재생 페이지로 남길 수 있다.
+
+**Walkmate는 브라우저 시연·실행 런타임이며, MCP는 에이전트가 이 런타임을 사용하는 인터페이스다.**
+무엇을 실행할지는 에이전트가 판단하고, Walkmate는 Chrome 조작·기록·실행 결과 저장을 담당한다.
 stdio MCP 서버라서 Claude Code, Codex, pi 등 특정 에이전트에 종속되지 않는다.
 
 - **라이브 리뷰**: 앱(예: `http://localhost:5173/dashboard`)을 리뷰 전용 Chrome 창에서 열고, 직접 써 보면서 말한다.
   발화마다 그때 가리킨 요소, React 컴포넌트, 소스 파일과 줄, 스크린샷이 붙는다. rrweb로 화면과 음성을 다시 재생할 수 있다.
 - **문서 리뷰**: 에이전트가 정리한 결정·질문·diff 페이지를 읽으며 말하고 답한다.
+- **에이전트 실행**: 시연한 절차나 E2E skill을 에이전트가 읽고 MCP로 화면 확인·조작·검증을 수행한다.
+  별도 브라우저 CLI 없이 Chrome DevTools Protocol을 사용하며, 단계 결과와 실행 화면을 함께 기록한다.
 
 [ETOOMANYTHINGS? Run Fewer Agents](https://blog.exe.dev/etoomanythings)의 DOM 녹화 아이디어에서 출발했다.
 
@@ -47,19 +53,19 @@ node dist/mcp/cli.js doctor --voice          # 도구·모델 점검. 마이크�
 node dist/mcp/cli.js doctor --mic            # 위 점검 + 마이크 2초 녹음. OS 권한이 필요하다.
 ```
 
-`whisper-cli`가 PATH에 없다면 `REVIEW_RECORDER_WHISPER_BIN`에 실행 파일 경로를 지정한다.
+`whisper-cli`가 PATH에 없다면 `WALKMATE_WHISPER_BIN`에 실행 파일 경로를 지정한다.
 로컬 whisper.cpp 대신 OpenAI `whisper-1`을 선택하려면 MCP 서버 환경에 `OPENAI_API_KEY`와
-`REVIEW_RECORDER_TRANSCRIBER=openai`를 설정한다. **이 경우 녹음 파일을 OpenAI에 전송한다.**
+`WALKMATE_TRANSCRIBER=openai`를 설정한다. **이 경우 녹음 파일을 OpenAI에 전송한다.**
 기본값 `auto`는 로컬 엔진이 준비되지 않았고 API 키가 있으면 OpenAI를 사용한다.
-전사 없이 녹음 파일만 저장하려면 `REVIEW_RECORDER_TRANSCRIBER=none`을 설정한다.
+전사 없이 녹음 파일만 저장하려면 `WALKMATE_TRANSCRIBER=none`을 설정한다.
 
 ### OS별 마이크 설정
 
 - **macOS:** AVFoundation을 사용한다. 기본 장치는 `default`이며, 터미널 앱에 마이크 권한을 허용해야 한다.
 - **Linux:** PulseAudio 입력을 사용한다. PulseAudio 또는 PipeWire의 PulseAudio 호환 서비스가 필요하다.
-  `REVIEW_RECORDER_MIC`에는 `default`나 입력 소스 이름을 지정한다. CI·헤드리스 환경에서는 마이크를 사용하지 않아도 된다.
+  `WALKMATE_MIC`에는 `default`나 입력 소스 이름을 지정한다. CI·헤드리스 환경에서는 마이크를 사용하지 않아도 된다.
 - **Windows:** DirectShow를 사용한다. `ffmpeg -list_devices true -f dshow -i dummy`로 오디오 장치 이름을 확인하고,
-  MCP 서버 환경의 `REVIEW_RECORDER_MIC`에 실제 장치 이름을 지정한다(`default`가 자동 선택된다고 가정하지 않는다).
+  MCP 서버 환경의 `WALKMATE_MIC`에 실제 장치 이름을 지정한다(`default`가 자동 선택된다고 가정하지 않는다).
 
 문서 리뷰는 브라우저의 MediaRecorder로 녹음한다. ffmpeg는 로컬 전사와 무음 검사에 사용되며,
 `doctor --voice`·`--mic`는 라이브 리뷰용 ffmpeg 녹음 경로를 점검한다.
@@ -85,8 +91,8 @@ codex mcp add walkmate -- node $REPO/dist/mcp/cli.js mcp
 pi mcp add walkmate --exposure direct -- node $REPO/dist/mcp/cli.js mcp
 ```
 
-확인은 Claude Code·pi에서 `/mcp`, 셸에서 `codex mcp list` / `pi mcp list`. 도구 세 개(`review_start`, `review_wait`,
-`review_cancel`)가 보이면 된다. `npm link`를 해 두면 `node $REPO/dist/mcp/cli.js` 대신 `walkmate`로 써도 된다.
+확인은 Claude Code·pi에서 `/mcp`, 셸에서 `codex mcp list` / `pi mcp list`.
+사람 시연용 `review_start`·`review_wait`·`review_cancel`과 에이전트 실행용 `run_start`·`run_step`·`run_finish`가 보이면 된다. `npm link`를 해 두면 `node $REPO/dist/mcp/cli.js` 대신 `walkmate`로 써도 된다.
 
 코드를 고친 뒤에는 `npm run build`를 하고 클라이언트를 다시 시작한다(pi는 `/reload`). MCP 서버는 세션이 시작될 때 뜬다.
 
@@ -94,15 +100,31 @@ pi mcp add walkmate --exposure direct -- node $REPO/dist/mcp/cli.js mcp
 
 에이전트에게 말하면 된다.
 
+- "walkmate 켜봐"
+- "워크메이트 켜줘"
 - "localhost:5173/dashboard 라이브 리뷰 열어줘"
 - "방금 한 작업 리뷰 페이지로 보여줘"
+- "Walkmate로 확인하자"
+- "워크메이트로 보여줄게"
+- "방금 시연한 로그인 절차를 Walkmate로 다시 실행하고 검증해 줘"
+- "이 E2E skill을 Walkmate로 실행하고 재생 기록을 남겨 줘"
+
+"walkmate 켜봐"처럼 대상 없이 시작해 달라고 하면 에이전트는 경로·앱·실행 중인 포트를 탐색하거나
+URL을 되묻지 않고 바로 `review_start({})`를 호출한다. 전용 Chrome의 빈 탭이 열리면
+사용자가 직접 주소를 입력해서 시연한다. 사이트로 이동하면 리뷰 툴바가 표시되며, 마이크는 녹음 버튼을 눌러야 켜진다.
+URL을 전달하면 해당 사이트를 바로 열고, URL 없이 문서 섹션을 전달하면 문서 리뷰를 연다.
+
+단순히 Walkmate의 이름을 언급하거나 사용법·구현을 묻는 경우에는 리뷰를 열지 않는다.
+이 기준은 에이전트에게 전달하는 지침이며, 키워드를 감지해서 자동 실행하는 기능은 아니다.
+도구가 지연 노출되는 클라이언트에서는 에이전트가 먼저 Walkmate의 `review_start` MCP 도구를 검색해야 한다.
 
 에이전트가 `review_start`로 리뷰를 열고, 끝날 때까지 `review_wait`를 반복 호출한 뒤, 피드백대로 작업한다.
-Claude Code에서는 MCP 프롬프트로도 시작할 수 있다: `/walkmate:live_review <url>`, `/walkmate:review_changes`.
+Claude Code에서는 MCP 프롬프트로도 시작할 수 있다: `/walkmate:live_review [url]`, `/walkmate:review_changes`.
+`live_review`에서 URL을 생략하면 빈 Chrome 탭으로 시작한다.
 
 ### 라이브 리뷰
 
-리뷰 전용 Chrome 창이 열린다(프로필 `~/.review-recorder/chrome-profile`, 로그인은 처음 한 번).
+리뷰 전용 Chrome 창이 열린다(프로필 `~/.walkmate/chrome-profile`, 로그인은 처음 한 번).
 오른쪽 아래 툴바:
 
 | | |
@@ -123,6 +145,73 @@ Claude Code에서는 MCP 프롬프트로도 시작할 수 있다: `/walkmate:liv
 기본 브라우저에 페이지가 열린다. `R` 또는 **● 녹음**으로 녹음을 켜고 끈다.
 섹션마다 텍스트 코멘트를, 질문에는 선택지 버튼을 쓸 수 있다. 탭을 닫았다면 리뷰 폴더의 `url.txt`로 다시 연다.
 
+## 시연을 에이전트가 다시 실행하기
+
+에이전트가 시연 기록·플레이북·skill을 읽고 필요한 단계와 검증 조건을 정리한 뒤,
+`run_start` → `run_step` 반복 → `run_finish`로 실제 앱을 조작한다.
+사람이 리뷰 중일 때는 기존 `review_wait` 흐름을 사용하지만, **에이전트 실행에서는 `review_wait`를 호출하지 않는다.**
+한 MCP 서버에서 리뷰와 실행을 동시에 열 수는 없다.
+
+| 도구 | 역할 |
+|---|---|
+| `run_start` | 전용 Chrome을 열고 실행 기록을 시작한다. 현재 요소·스크린샷·실행 id·저장 폴더를 반환한다. 기본 URL은 `about:blank` |
+| `run_step` | 화면 확인, 이동, 클릭, 입력, 선택, 체크, 키 입력, 스크롤, 대기, 검증 중 한 단계를 실행한다. `action`을 생략하면 화면을 확인한다 |
+| `run_finish` | Chrome을 닫고 기록을 저장한다. 결과와 `replay.html` 경로를 반환한다. `cancel: true`이면 실행 중인 단계도 중단한다 |
+
+MCP 호출 예시:
+
+```json
+{"tool":"run_start","arguments":{"cwd":"/path/to/project","url":"http://localhost:5173/login","title":"로그인 E2E","allow_actions":true,"isolated":true,"source_recording":"/path/to/project/.walkmate/reviews/mcp/demo"}}
+{"tool":"run_step","arguments":{"id":"u1","action":{"type":"fill","target":{"kind":"testid","value":"auth-email"},"value_env":"E2E_EMAIL","source_step":"login-email"}}}
+{"tool":"run_step","arguments":{"id":"u1","action":{"type":"fill","target":{"kind":"testid","value":"auth-password"},"value_env":"E2E_PASSWORD","source_step":"login-password"}}}
+{"tool":"run_step","arguments":{"id":"u1","action":{"type":"click","target":{"kind":"testid","value":"auth-login-submit"},"source_step":"login-submit"}}}
+{"tool":"run_step","arguments":{"id":"u1","action":{"type":"wait","target":{"kind":"testid","value":"dashboard"},"condition":"visible"}}}
+{"tool":"run_step","arguments":{"id":"u1","action":{"type":"assert","condition":"url","expected":"/dashboard"}}}
+{"tool":"run_finish","arguments":{"id":"u1"}}
+```
+
+`E2E_EMAIL`과 `E2E_PASSWORD`는 MCP 서버 환경에 설정한다. 예시의 testid와 검증 조건은 실제 앱에 맞춰 정한다.
+`source_recording`과 `source_step`은 시연과 실행의 연결 정보이며, 해당 녹화 파일을 자동으로 읽거나 실행하지는 않는다.
+
+### 요소 탐색과 성공 판정
+
+- `target.kind`는 `ref`, `testid`, `css`, `role` 중 하나다. `ref`는 현재 화면 응답에서 받은 값을 사용하며,
+  페이지가 바뀌거나 요소가 교체되면 다시 화면을 확인한다. `role`과 이름은 DOM에서 추정하며 완전한 접근성 트리는 아니다.
+- 여러 요소가 일치하면 실패한다. `scope`에 정확히 한 컨테이너를 가리키는 CSS 선택자를 지정하거나 고유한 ref를 사용한다.
+  녹화 당시 좌표를 그대로 반복하지 않는다.
+- `fill`·`select`는 `value` 또는 `value_env` 중 하나를 받는다. `select`는 native select의 option value를 사용한다.
+  `check`는 원하는 상태를 받아 이미 같은 상태인 체크박스를 다시 누르지 않는다.
+- `wait`는 조건이 충족될 때까지 기다리고, `assert`는 현재 조건을 한 번 검사한다.
+  조건은 `visible`, `hidden`, `text`, `url`이며 `text`·`url`은 `expected`가 포함되어 있는지 검사한다.
+- 단계 제한 시간은 `timeout_ms`로 지정하며 기본 10초, 최대 30초다. 시간 초과 시 늦게 실행되는 후속 조작을 막기 위해 실행을 중단한다.
+  실패 후에는 `observe`로 증거를 확인하거나 종료할 수 있고, 상태 변경 동작을 조용히 재시도하지 않는다.
+- 성공한 `assert` 없이 끝낸 실행은 `completed`다. 모든 기록된 단계가 성공하고 하나 이상의 검증이 통과해야 `passed`가 된다.
+  실패한 단계가 있으면 `failed`, 사용자 중단은 `cancelled`, 시간 초과는 `timeout`으로 기록한다.
+  `passed`는 작성한 검증 조건이 통과했다는 뜻이지, 시연과 완전히 같거나 모든 업무 조건을 검증했다는 뜻은 아니다.
+
+### 실행 화면과 기록
+
+기본값은 사용자가 볼 수 있는 Chrome이다. `headless: true`는 화면 없는 테스트 실행에 사용한다.
+기본 로그인 프로필은 공유 프로필이며 이미 로그인된 상태일 수 있다. 로그인 자체를 검증하거나 깨끗한 초기 상태가 필요한 경우
+`isolated: true`로 임시 프로필을 사용한다. 임시 프로필은 실행이 끝나면 삭제하며, 공유 로그인 프로필은 유지한다.
+전체 실행 제한은 `timeout_sec`로 지정하며 기본·최대 3600초다.
+
+기록은 `<프로젝트>/.walkmate/runs/<실행 폴더>/`에 저장한다.
+`request.json`, `steps.json`, `run.json`, `events.json`, `network.json`, `console.json`, `shots/`, rrweb 기록을 남기며,
+화면의 전체 스냅샷을 얻었으면 `replay.html`도 만든다. 빈 탭만 열었다가 종료하는 등 스냅샷이 없으면 재생 페이지를 만들 수 없다.
+재생 페이지의 단계 항목을 누르면 해당 실행 시점으로 이동한다. 이것은 실제 앱을 다시 실행하는 것이 아니라 기록을 재생하는 기능이다.
+
+실행 모드에서는 마이크를 사용하지 않는다. 브라우저의 취소 버튼이나 창 닫기로 실행을 중단할 수 있다.
+리터럴 입력값은 단계 로그에서 가리고, DOM 녹화에서도 입력값을 가린다. **스크린샷·페이지 글자·네트워크 본문까지
+완전히 비식별화하는 것은 아니므로** 기록을 공유하기 전에 확인해야 한다.
+
+`allow_actions` 기본값은 `false`다. 사용자가 해당 테스트 실행을 승인했을 때만 `true`로 설정한다.
+저장·발행·삭제·결제 같은 결과를 되돌리기 어려운 동작에는 명시적인 승인이 필요하며, 이 플래그는 버튼의 업무 의미를
+자동으로 분류하거나 별도의 승인을 대신하지 않는다. 브라우저 확인 대화상자는 현재 자동 승인하지 않고 닫은 뒤 실패로 처리한다.
+
+첫 버전은 상위 문서의 DOM을 조작한다. iframe·shadow DOM 내부 탐색, 파일 업로드·드래그, 임의 JavaScript 실행은 지원하지 않는다.
+**에이전트가 한 단계씩 선택해서 실행하는 기능**이며, `workflow.json` 무인 실행이나 시연/실행 자동 비교 기능은 아직 없다.
+
 ## 시연을 플레이북으로 변환 (시제품)
 
 사람이 보여 준 절차를 에이전트에게 전달하려면, 제출한 **라이브 리뷰 폴더**를 플레이북 초안으로 변환한다.
@@ -131,7 +220,7 @@ Claude Code에서는 MCP 프롬프트로도 시작할 수 있다: `/walkmate:liv
 ```bash
 # 저장소에서 빌드한 뒤 실행. REVIEW에는 events.json이 있는 라이브 리뷰 폴더를 지정한다.
 npm run build
-REVIEW="$HOME/.review-recorder/reviews/mcp/<녹화 시각>"
+REVIEW="$PWD/.walkmate/reviews/mcp/<녹화 폴더>"
 node dist/mcp/cli.js playbook "$REVIEW" --from 42 --to 50 --title "시연한 작업"
 ```
 
@@ -158,8 +247,8 @@ node dist/mcp/cli.js playbook "$REVIEW" --from 42 --to 50 --title "시연한 작
 3. 현재 DOM에서 요소를 찾고, 여러 개가 일치하면 행·컨테이너로 범위를 제한한다.
 4. 각 단계의 성공 판정과 대기 조건을 확정한다. 저장·발행·삭제·결제는 승인 없이 실행하지 않는다.
 
-이 시제품에는 실행 에이전트나 시연/실행 비교 기능이 없다. 고객 정보·URL·메모는 초안에도 포함될 수 있으므로
-외부 공유 전에 확인한다. 네트워크 요청/응답 본문은 초안에 복사하지 않는다.
+플레이북 CLI는 초안만 생성하며 행동을 자동 실행하지 않는다. 에이전트가 초안을 검토한 뒤 위의 `run_*` 도구로
+단계별 실행을 할 수 있지만, 시연/실행 자동 비교 기능은 없다. 고객 정보·URL·메모는 초안에도 포함될 수 있으므로 외부 공유 전에 확인한다. 네트워크 요청/응답 본문은 초안에 복사하지 않는다.
 
 ## 무엇을 모으나
 
@@ -174,7 +263,7 @@ node dist/mcp/cli.js playbook "$REVIEW" --from 42 --to 50 --title "시연한 작
 | 콘솔 | `console.json` | 오류·경고, 잡히지 않은 예외(소스 파일:줄) |
 | PDF 등 HTML이 아닌 문서 | `docs/` 사본 (blob URL 포함) | 열었다는 것과 사본 경로. 안의 클릭·스크롤은 안 남는다(스크린샷으로 본다) |
 | 이미지·폰트 원본 | `assets/` | 없음. `replay.html`이 원래 주소 대신 사본을 쓴다 |
-| canvas | rrweb (초당 1프레임, `REVIEW_RECORDER_CANVAS_FPS`) | 없음. 재생용 |
+| canvas | rrweb (초당 1프레임, `WALKMATE_CANVAS_FPS`) | 없음. 재생용 |
 
 요청·응답 헤더는 저장하지 않는다(쿠키, 토큰). 응답 본문은 API(fetch/XHR) 텍스트만 256KB까지 저장한다.
 다른 도메인 iframe은 화면(스크린샷)과 네트워크만 남고, 안의 DOM은 기록하지 않는다.
@@ -186,8 +275,8 @@ node dist/mcp/cli.js playbook "$REVIEW" --from 42 --to 50 --title "시연한 작
 
 | 도구 | |
 |---|---|
-| `review_start` | 리뷰를 열고 바로 id를 돌려준다. `url`이 있으면 라이브, 없으면 `sections`로 문서 리뷰 |
-| `review_wait` | 최대 45초(`REVIEW_RECORDER_WAIT_SEC`) 기다린다. 끝났으면 피드백(텍스트+스크린샷), 아니면 "다시 호출" |
+| `review_start` | 인자 없이 호출하면 빈 Chrome 탭에서 라이브 시연을 시작한다. `url`이 있으면 해당 사이트에서 라이브 리뷰, URL 없이 비어 있지 않은 `sections`를 전달하면 문서 리뷰. `title` 기본값은 `Walkmate`. 리뷰 id를 반환 |
+| `review_wait` | 최대 45초(`WALKMATE_WAIT_SEC`) 기다린다. 끝났으면 피드백(텍스트+스크린샷), 아니면 "다시 호출" |
 | `review_cancel` | 열린 리뷰를 닫는다 |
 
 `review_wait`는 클라이언트의 도구 타임아웃(Codex `tool_timeout_sec`, Claude Code `MCP_TOOL_TIMEOUT`, pi `timeout` 기본 60초)보다
@@ -223,39 +312,95 @@ ffmpeg가 있으면 대상에 빨간 상자를 표시하고, 없으면 원본을
 - ✂ [00:01.8] 선택: "user_id INTEGER NULL"
 ```
 
-원본(녹음, 이벤트, 스크린샷, rrweb, 보고서)은 `~/.review-recorder/reviews/<세션>/<시각>/`에 남는다.
+원본(녹음, 이벤트, 스크린샷, rrweb, 보고서)은 `<프로젝트>/.walkmate/reviews/<세션>/<시각>-<고유 접미사>/`에 남는다.
 라이브 리뷰의 `replay.html`을 열면 rrweb 화면과 녹음이 같이 재생되고, 발화 목록을 누르면 그 시점으로 간다.
 
-## 기존 review-recorder 사용자
+## 프로젝트별 기록과 skill
 
-프로젝트명과 새 CLI 이름은 `walkmate`다. 기존 `review-recorder` 실행 이름도 유지하며,
-MCP 도구 이름(`review_start`·`review_wait`·`review_cancel`)은 바꾸지 않았다.
-기존 MCP 등록 이름도 그대로 쓸 수 있다. 새로 등록하는 경우에는 위 예시처럼 `walkmate`를 사용한다.
+녹화와 녹화에서 만든 자료는 해당 프로젝트의 `.walkmate` 아래에 모은다.
+MCP의 `cwd`에는 현재 작업 중인 프로젝트 루트를 전달한다. 생략하면 MCP 서버의 작업 디렉터리를 사용하며,
+앱 URL에서 저장소를 추측하거나 다른 프로젝트를 탐색하지 않는다. 클라이언트가 서버 작업 디렉터리를 고정했다면
+에이전트가 알고 있는 현재 프로젝트 경로를 `cwd`로 전달해야 한다.
 
-전용 pi 확장은 제거했다. 확장에서 제공하던 `/review` 명령·`request_review` 도구·진행 위젯 대신
-MCP의 `review_start`·`review_wait`·`review_cancel`을 사용한다. pi도 위 MCP 등록 방식으로 계속 사용할 수 있다.
-이전에 `pi install`로 확장을 등록했다면 해당 설치 선언을 제거하고 MCP로 등록한다.
+```text
+<프로젝트>/.walkmate/
+  .gitignore                     기본값: 모든 내부 파일을 Git에서 제외
+  reviews/mcp/<녹화 폴더>/         원본 기록·보고서·재생 페이지
+    playbook/                    CLI가 만든 플레이북 초안
+  runs/<실행 폴더>/               에이전트 실행 기록·단계 결과·재생 페이지
+  skills/<이름>/SKILL.md          요청한 E2E skill을 에이전트가 작성할 위치
+  notes/<이름>.md                시연한 절차를 기억해 달라고 했을 때 사용할 위치
+```
 
-녹화·모델·Chrome 로그인 프로필을 그대로 사용하도록 기본 데이터 폴더 `~/.review-recorder`와
-`REVIEW_RECORDER_*` 환경 변수는 유지한다. 저장소 디렉터리를 옮겼다면 MCP 서버 명령의 경로도 갱신해야 한다.
+`review_start`와 피드백 응답에는 실제 녹화 폴더와 skill·메모를 저장할 경로가 표시된다.
+MCP는 에이전트에게 이 경로를 사용하고 원본 녹화 경로를 함께 적도록 안내한다.
+사용자가 다른 위치를 지정하지 않았다면 전역 에이전트 메모리나 무관한 폴더에 저장하지 않는다.
+skill과 메모는 사용자 요청에 따라 에이전트가 작성하며, 녹화 제출만으로 자동 생성되지는 않는다.
+`.walkmate/skills`는 자료 보관 위치이며, 각 에이전트가 자동으로 발견하는 skill 경로는 아니다.
+실행할 때는 파일을 직접 읽히거나 검토 후 해당 에이전트의 skill 경로에 설치한다.
+
+로그인 프로필과 음성 모델은 공유 폴더 `~/.walkmate`에 유지한다. 프로젝트가 바뀌어도
+같은 Chrome 프로필을 사용하므로 사이트에서 세션을 만료시키지 않았다면 로그인 상태가 유지된다.
+`WALKMATE_HOME`은 이 공유 폴더만 바꾸며, 프로젝트 녹화 위치는 `cwd`로 결정한다.
+
+**녹화에는 민감정보가 포함될 수 있다.** 네트워크 요청·응답 본문에 비밀번호나 토큰이 남을 수 있으므로,
+데모 계정이라도 공개 저장소에 올려도 안전하다고 가정하지 않는다. 새로운 `.walkmate` 폴더에는 내부 파일을
+Git에서 제외하는 `.gitignore`를 만들며, 기존 규칙은 덮어쓰지 않는다. 이미 Git에 추적 중인 파일은 제외 규칙만으로
+추적이 해제되지 않으므로 따로 확인한다. 자료를 공유하기 전에 내용을 검토한다.
+로그인 절차를 skill·메모로 정리할 때는 비밀번호나 토큰을 복사하지 말고 환경 변수로 받도록 작성한다.
+
+## 이전 버전에서 전환하기
+
+CLI 이름은 `walkmate`, 환경 변수 접두사는 `WALKMATE_`로 통일했다.
+공유 모델·Chrome 프로필 폴더는 `~/.walkmate`이며, 새 녹화는 프로젝트의 `.walkmate/reviews`에 저장한다.
+이전 `review-recorder` 실행 이름과 `REVIEW_RECORDER_*` 환경 변수는 더 이상 지원하지 않으며,
+이전 데이터 폴더 `~/.review-recorder`를 자동으로 읽거나 이동하지 않는다.
+MCP 도구 이름(`review_start`·`review_wait`·`review_cancel`)은 그대로 유지한다.
+
+기존 음성 모델·Chrome 로그인 프로필을 계속 사용하려면 MCP 클라이언트와 리뷰 전용 Chrome을 종료한 뒤
+공유 데이터 폴더를 옮긴다. 아래 명령은 대상 폴더가 이미 있으면 이동하지 않는다.
+두 폴더가 모두 있다면 먼저 백업하고 필요한 데이터를 직접 옮긴다.
+
+```bash
+if [ -d "$HOME/.review-recorder" ] && [ ! -e "$HOME/.walkmate" ]; then
+  mv "$HOME/.review-recorder" "$HOME/.walkmate"
+fi
+```
+
+위 명령으로 옮긴 기존 녹화는 `~/.walkmate/reviews`에 남지만 새 녹화를 그곳에 저장하지는 않는다.
+필요한 기존 녹화는 내용을 확인한 뒤 해당 프로젝트의 `.walkmate/reviews`로 직접 옮긴다.
+기존 플레이북·메모에 적힌 절대 경로도 함께 갱신한다.
+
+MCP 서버 환경에 설정한 `REVIEW_RECORDER_<이름>`은 `WALKMATE_<이름>`으로 바꾼다.
+사용자 지정 공유 폴더는 `WALKMATE_HOME`으로 지정할 수 있다. 경로를 직접 지정한 모델·Chrome 프로필 설정도
+이동 후 경로에 맞춰 갱신한다. Chrome 프로필을 옮기면 저장된 로그인 정보를 계속 사용할 수 있지만,
+사이트의 세션 만료나 OS 암호화 정책에 따라 다시 로그인해야 할 수 있다.
+
+이전 이름으로 MCP를 등록했다면 해당 등록을 제거하고 위의 `walkmate` 등록 명령으로 다시 등록한다.
+저장소 디렉터리를 옮겼다면 서버 명령의 경로도 갱신한다. `npm link`로 CLI를 사용했다면 다시 실행한다.
+빌드 후 MCP 클라이언트를 다시 시작한다(pi는 `/reload`).
+
+전용 pi 확장은 제거했다. 이전에 `pi install`로 확장을 등록했다면 해당 설치 선언을 제거하고 MCP로 등록한다.
+확장에서 제공하던 `/review` 명령·`request_review` 도구·진행 위젯 대신
+MCP의 `review_start`·`review_wait`·`review_cancel`을 사용한다.
 
 ## 설정 (환경 변수)
 
 | 변수 | 기본값 | |
 |---|---|---|
-| `REVIEW_RECORDER_HOME` | `~/.review-recorder` | 모델, 리뷰 기록, 브라우저 프로필 |
-| `REVIEW_RECORDER_TRANSCRIBER` | `auto` | `whisper-cpp`, `openai`, `none` |
-| `REVIEW_RECORDER_LANG` | `ko` | 받아쓰기 언어 |
-| `REVIEW_RECORDER_WHISPER_BIN` | `whisper-cli` | |
-| `REVIEW_RECORDER_WHISPER_MODEL` | `$HOME/models/ggml-large-v3-turbo.bin` | |
-| `REVIEW_RECORDER_TIMEOUT_MIN` | `60` | 리뷰 제한 시간. `0`이면 무제한 |
-| `REVIEW_RECORDER_WAIT_SEC` | `45` | MCP `review_wait` 한 번의 대기. 클라이언트 도구 타임아웃보다 짧게 |
-| `REVIEW_RECORDER_OPEN` | | 문서 리뷰: `0`이면 브라우저를 자동으로 열지 않음 |
-| `REVIEW_RECORDER_MIC` | `default` | macOS: AVFoundation 장치, Linux: PulseAudio 소스, Windows: 실제 DirectShow 오디오 장치 이름 |
-| `REVIEW_RECORDER_MAX_SHOTS` | `6` | 라이브 리뷰 결과에 붙일 스크린샷 수 |
-| `REVIEW_RECORDER_CANVAS_FPS` | `1` | rrweb canvas 기록 초당 프레임. `0`이면 끈다 |
-| `REVIEW_RECORDER_CHROME` | OS별 Chrome 경로 또는 `google-chrome` | 기본값으로 찾지 못하면 실행 파일 경로 지정 |
-| `REVIEW_RECORDER_CHROME_PROFILE` | `$HOME/chrome-profile` | |
+| `WALKMATE_HOME` | `~/.walkmate` | 공유 모델·브라우저 프로필. 녹화는 프로젝트의 `.walkmate/reviews`에 저장 |
+| `WALKMATE_TRANSCRIBER` | `auto` | `whisper-cpp`, `openai`, `none` |
+| `WALKMATE_LANG` | `ko` | 받아쓰기 언어 |
+| `WALKMATE_WHISPER_BIN` | `whisper-cli` | |
+| `WALKMATE_WHISPER_MODEL` | `<데이터 폴더>/models/ggml-large-v3-turbo.bin` | 기본 데이터 폴더는 `~/.walkmate`. `WALKMATE_HOME`으로 변경 가능 |
+| `WALKMATE_TIMEOUT_MIN` | `60` | 리뷰 제한 시간. `0`이면 무제한 |
+| `WALKMATE_WAIT_SEC` | `45` | MCP `review_wait` 한 번의 대기. 클라이언트 도구 타임아웃보다 짧게 |
+| `WALKMATE_OPEN` | | 문서 리뷰: `0`이면 브라우저를 자동으로 열지 않음 |
+| `WALKMATE_MIC` | `default` | macOS: AVFoundation 장치, Linux: PulseAudio 소스, Windows: 실제 DirectShow 오디오 장치 이름 |
+| `WALKMATE_MAX_SHOTS` | `6` | 라이브 리뷰 결과에 붙일 스크린샷 수 |
+| `WALKMATE_CANVAS_FPS` | `1` | rrweb canvas 기록 초당 프레임. `0`이면 끈다 |
+| `WALKMATE_CHROME` | OS별 Chrome 경로 또는 `google-chrome` | 기본값으로 찾지 못하면 실행 파일 경로 지정 |
+| `WALKMATE_CHROME_PROFILE` | `<데이터 폴더>/chrome-profile` | 기본값은 `~/.walkmate/chrome-profile`. 리뷰 사이에 로그인 정보를 유지 |
 
 ## 구조
 
@@ -267,6 +412,10 @@ src/mcp/    stdio MCP 서버와 CLI (dist/로 빌드)
 | 파일 | 역할 |
 |---|---|
 | `core/review.ts` | 한 번의 리뷰: 열기 → 대기 → 받아쓰기 → 보고서 (문서·라이브). 호스트는 `ReviewEnv`로 연결 |
+| `core/storage.ts` | 프로젝트별 `.walkmate` 경로, 고유 녹화·실행 폴더, 기본 Git 제외 규칙 |
+| `core/runtime/run.ts`, `core/runtime/types.ts` | 네이티브 브라우저 실행 세션·행동·검증·실행 결과와 인자 검사 |
+| `core/page/runtime.js` | 현재 DOM 관찰·고유 요소 탐색·ref 관리. 사용자 JavaScript는 실행하지 않음 |
+| `mcp/runtime.ts` | 실행 도구 `run_start` / `run_step` / `run_finish`와 세션 관리 |
 | `core/types.ts` | 요청 JSON Schema와 검사 |
 | `core/dependencies.ts` | OS별 실행 파일 탐색과 선택 음성 도구 설치 안내 |
 | `core/render.ts`, `core/server.ts`, `core/diff.ts`, `core/timeline.ts` | 문서 리뷰 페이지, 127.0.0.1 서버, git diff, 보고서 |
@@ -290,6 +439,8 @@ npm test                           # node --test (MCP 서버 포함, ffmpeg가 �
 npm run build                      # dist/
 node scripts/e2e.ts                # 선택 macOS 음성 통합 테스트: Chrome + ffmpeg + say -v Yuna
 node scripts/e2e-live.ts           # 선택 macOS 라이브 통합 테스트: 같은 음성 도구 + API·콘솔·PDF·replay.html
+node scripts/e2e-launch.ts         # 선택 Chrome 통합 테스트: 빈 탭 시작 → 사이트 이동 → 툴바·시연 기록 (음성 도구 불필요)
+WALKMATE_E2E=1 node --test test/runtime-browser.test.ts  # 선택 실제 MCP+Chrome 실행 테스트 (격리된 headless 프로필)
 node scripts/e2e-agent.ts claude   # 실제 에이전트(claude, codex, pi)가 MCP로 리뷰를 열고 기다려 결과를 받는지
 ```
 

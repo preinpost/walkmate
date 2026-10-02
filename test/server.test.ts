@@ -7,7 +7,7 @@ import { renderPage } from "../src/core/render.ts";
 import { newToken, startReviewServer } from "../src/core/server.ts";
 
 test("serves the page, stores clips, resolves on submit", async () => {
-	const dir = mkdtempSync(join(tmpdir(), "prr-"));
+	const dir = mkdtempSync(join(tmpdir(), "walkmate-"));
 	const req = {
 		title: "t",
 		summary: "**hi** <script>alert(1)</script>",

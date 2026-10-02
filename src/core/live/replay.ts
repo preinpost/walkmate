@@ -15,6 +15,8 @@ export async function writeReplay(opts: {
 	rrweb: { tab: number; file: string }[];
 	clips: ClipInfo[];
 	utterances: LiveUtterance[];
+	/** Agent execution markers share the same clock as the captured page. */
+	steps?: { t: number; text: string; tab?: number }[];
 	/** Original URL → saved copy, so images and fonts load without the dev server. */
 	assets?: Record<string, string>;
 }): Promise<string | undefined> {
@@ -45,7 +47,7 @@ export async function writeReplay(opts: {
 		t0: opts.t0,
 		tabs,
 		clips: opts.clips.map((c) => ({ src: basename(c.file), offset: c.offset })),
-		utterances: opts.utterances.map((u) => ({ t: u.start, text: u.text, tab: u.tab })),
+		utterances: [...opts.utterances.map((u) => ({ t: u.start, text: u.text, tab: u.tab })), ...(opts.steps ?? [])].sort((a, b) => a.t - b.t),
 	};
 	const json = JSON.stringify(data).replace(/</g, "\\u003c");
 	const html = `<!doctype html>
@@ -135,7 +137,7 @@ $("tab").onchange = () => load(+$("tab").value);
 $("utts").innerHTML = D.utterances.map((u) => {
   const m = Math.floor(u.t / 60), s = (u.t % 60).toFixed(1).padStart(4, "0");
   return '<div class="u" data-t="' + u.t + '" data-tab="' + u.tab + '"><small>' + m + ":" + s + "</small>" + u.text.replace(/[&<>]/g, (c) => "&#" + c.charCodeAt(0) + ";") + "</div>";
-}).join("") || '<div class="u"><small>발화 없음</small></div>';
+}).join("") || '<div class="u"><small>발화·단계 기록 없음</small></div>';
 $("utts").onclick = (e) => {
   const el = e.target.closest(".u[data-t]");
   if (!el) return;

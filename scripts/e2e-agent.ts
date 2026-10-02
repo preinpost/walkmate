@@ -8,10 +8,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const agent = process.argv[2] ?? "claude";
-const home = mkdtempSync(join(tmpdir(), "prr-agent-"));
-const work = mkdtempSync(join(tmpdir(), "prr-agent-work-"));
+const home = mkdtempSync(join(tmpdir(), "walkmate-agent-"));
+const work = mkdtempSync(join(tmpdir(), "walkmate-agent-work-"));
 const cli = new URL("../dist/mcp/cli.js", import.meta.url).pathname;
-const serverEnv = { REVIEW_RECORDER_HOME: home, REVIEW_RECORDER_OPEN: "0", REVIEW_RECORDER_TRANSCRIBER: "none", REVIEW_RECORDER_WAIT_SEC: "10" };
+const serverEnv = { WALKMATE_HOME: home, WALKMATE_OPEN: "0", WALKMATE_TRANSCRIBER: "none", WALKMATE_WAIT_SEC: "10" };
 
 // E2E_PROMPT replaces the request, e.g. "/walkmate:review_changes" to test the MCP prompt.
 const custom = process.env.E2E_PROMPT;
@@ -31,10 +31,10 @@ const [cmd, args] =
 				[
 					"exec",
 					"--skip-git-repo-check",
-					"-c", `mcp_servers.review-recorder.command="node"`,
-					"-c", `mcp_servers.review-recorder.args=["${cli}","mcp"]`,
-					"-c", `mcp_servers.review-recorder.env=${toToml(serverEnv)}`,
-					"-c", `mcp_servers.review-recorder.default_tools_approval_mode="approve"`,
+					"-c", `mcp_servers.walkmate.command="node"`,
+					"-c", `mcp_servers.walkmate.args=["${cli}","mcp"]`,
+					"-c", `mcp_servers.walkmate.env=${toToml(serverEnv)}`,
+					"-c", `mcp_servers.walkmate.default_tools_approval_mode="approve"`,
 					prompt,
 				],
 			]
@@ -55,7 +55,7 @@ child.stdout.on("data", (d) => (out += d));
 child.stderr.on("data", (d) => (out += d));
 
 // Play the reviewer: find the page, wait past one review_wait, submit.
-const reviews = join(home, "reviews", "mcp");
+const reviews = join(work, ".walkmate", "reviews", "mcp");
 let url: string | undefined;
 while (!url && Date.now() - started < 180_000 && child.exitCode === null) {
 	await new Promise((r) => setTimeout(r, 500));

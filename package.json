@@ -1,7 +1,7 @@
 {
   "name": "walkmate",
   "version": "0.2.0",
-  "description": "Record walkthroughs and voice feedback for coding agents, then turn demonstrations into reviewable playbooks. Agent-independent MCP server.",
+  "description": "A browser walkthrough and execution runtime exposed through MCP. Record demonstrations, let agents reproduce workflows, and review replayable evidence.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/preinpost/walkmate.git"
@@ -24,8 +24,7 @@
     "node": ">=22"
   },
   "bin": {
-    "walkmate": "./dist/mcp/cli.js",
-    "review-recorder": "./dist/mcp/cli.js"
+    "walkmate": "./dist/mcp/cli.js"
   },
   "files": [
     "dist",

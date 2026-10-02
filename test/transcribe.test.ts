@@ -9,7 +9,7 @@ import { findExecutable } from "../src/core/dependencies.ts";
 
 const ffmpeg = await findExecutable("ffmpeg");
 test("skips silent clips instead of letting whisper invent text", { skip: !ffmpeg && "optional ffmpeg is not installed" }, async (t) => {
-	const dir = mkdtempSync(join(tmpdir(), "prr-"));
+	const dir = mkdtempSync(join(tmpdir(), "walkmate-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
 	const file = join(dir, "clip-0.webm");
 	execFileSync("ffmpeg", ["-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-t", "2", "-c:a", "libopus", file]);

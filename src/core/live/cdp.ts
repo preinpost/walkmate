@@ -45,12 +45,26 @@ export class Cdp {
 		return new Cdp(ws);
 	}
 
-	send<T = any>(method: string, params: object = {}, sessionId?: string): Promise<T> {
+	send<T = any>(method: string, params: object = {}, sessionId?: string, timeoutMs = 15_000): Promise<T> {
 		if (this.ws.readyState !== WebSocket.OPEN) return Promise.reject(new Error("CDP connection closed"));
 		const id = ++this.nextId;
 		return new Promise<T>((resolve, reject) => {
-			this.pending.set(id, { resolve, reject });
-			this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+			const timer = setTimeout(() => {
+				this.pending.delete(id);
+				reject(new Error(`CDP ${method} timed out.`));
+			}, timeoutMs);
+			timer.unref();
+			this.pending.set(id, {
+				resolve: (value) => { clearTimeout(timer); resolve(value); },
+				reject: (err) => { clearTimeout(timer); reject(err); },
+			});
+			try {
+				this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+			} catch (err) {
+				clearTimeout(timer);
+				this.pending.delete(id);
+				reject(err);
+			}
 		});
 	}
 
@@ -86,7 +100,8 @@ export const CHROME_BIN =
  * on that profile. Recent Chrome refuses remote debugging on the default profile, and a dedicated
  * profile keeps logins between reviews.
  */
-export async function launchChrome(opts: { userDataDir: string; headless?: boolean; args?: string[] }): Promise<Browser> {
+export async function launchChrome(opts: { userDataDir: string; headless?: boolean; args?: string[]; signal?: AbortSignal }): Promise<Browser> {
+	if (opts.signal?.aborted) throw new Error("Chrome startup was cancelled.");
 	await mkdir(opts.userDataDir, { recursive: true });
 	const portFile = join(opts.userDataDir, "DevToolsActivePort");
 
@@ -97,7 +112,7 @@ export async function launchChrome(opts: { userDataDir: string; headless?: boole
 	}
 	await rm(portFile, { force: true });
 
-	if (!existsSync(CHROME_BIN) && CHROME_BIN.includes("/")) throw new Error(`Chrome을 찾지 못했습니다: ${CHROME_BIN} (REVIEW_RECORDER_CHROME로 지정)`);
+	if (!existsSync(CHROME_BIN) && CHROME_BIN.includes("/")) throw new Error(`Chrome을 찾지 못했습니다: ${CHROME_BIN} (WALKMATE_CHROME로 지정)`);
 	const proc = spawn(
 		CHROME_BIN,
 		[
@@ -119,6 +134,7 @@ export async function launchChrome(opts: { userDataDir: string; headless?: boole
 
 	for (let i = 0; i < 150; i++) {
 		await new Promise((r) => setTimeout(r, 100));
+		if (opts.signal?.aborted) { proc.kill(); throw new Error("Chrome startup was cancelled."); }
 		const info = await readPortFile(portFile);
 		if (info) {
 			const ws = await browserWs(info.port);

@@ -15,7 +15,7 @@ import { runLiveSession } from "../src/core/live/session.ts";
 import type { Recorder } from "../src/core/live/mic.ts";
 import { configFromEnv, transcribeClips } from "../src/core/transcribe.ts";
 
-const dir = mkdtempSync(join(tmpdir(), "prr-live-"));
+const dir = mkdtempSync(join(tmpdir(), "walkmate-live-"));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const speech = join(dir, "speech.aiff");

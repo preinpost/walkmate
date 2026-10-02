@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { CHROME_PROFILE, env, REVIEWS_DIR } from "./config.ts";
+import { CHROME_PROFILE, env } from "./config.ts";
 import { ffmpegRecorder } from "./live/mic.ts";
 import { buildLiveReport, loadImages } from "./live/report.ts";
 import { writeReplay } from "./live/replay.ts";
@@ -9,12 +9,13 @@ import { runLiveSession } from "./live/session.ts";
 import { loadDiffs, renderPage } from "./render.ts";
 import { newToken, type ReviewServer, startReviewServer } from "./server.ts";
 import { buildReport } from "./timeline.ts";
+import { createReviewDir } from "./storage.ts";
 import { configFromEnv, transcribeClips } from "./transcribe.ts";
 import type { ReviewDetails, ReviewRequest } from "./types.ts";
 
 /** What a review needs from whoever hosts it (pi, an MCP server, a test). */
 export interface ReviewEnv {
-	/** Directory diffs are taken from. */
+	/** Project directory for recordings and derived artifacts, also used for diffs. */
 	cwd: string;
 	/** Groups review folders, e.g. the pi session id or "mcp". */
 	group: string;
@@ -23,7 +24,7 @@ export interface ReviewEnv {
 	signal?: AbortSignal;
 	onStatus?: (status: string) => void;
 	/** Called once the reviewer can start: the page or browser is open. */
-	onWaiting?: (info: { url: string; title: string; live: boolean }) => void;
+	onWaiting?: (info: { url: string; title: string; live: boolean; dir: string }) => void;
 	/** Register something to close if the host shuts down mid-review. Returns an unregister function. */
 	track?: (resource: { close(): void }) => () => void;
 }
@@ -37,14 +38,8 @@ export interface ReviewOutcome {
 
 const timeoutMs = () => Number(env("TIMEOUT_MIN") ?? 60) * 60_000 || undefined;
 
-async function reviewDir(group: string): Promise<string> {
-	const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
-	const dir = join(REVIEWS_DIR, group.replace(/[^\w.-]/g, "_"), stamp);
-	await mkdir(dir, { recursive: true });
-	return dir;
-}
-
 export function normalizeUrl(url: string): string {
+	if (url === "about:blank") return url;
 	return /^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `http://${url}`;
 }
 
@@ -60,7 +55,7 @@ const noTrack = () => () => {};
 /** Open the running app in the review browser, record the walkthrough, and turn it into a report. */
 export async function runLiveReview(req: ReviewRequest & { url: string }, renv: ReviewEnv): Promise<ReviewOutcome> {
 	const url = normalizeUrl(req.url);
-	const dir = await reviewDir(renv.group);
+	const dir = await createReviewDir(renv.cwd, renv.group);
 	const points = (req.sections ?? []).map((s) => ({ id: s.id, title: s.title, body: s.body?.slice(0, 400), url: s.url }));
 	await writeFile(join(dir, "request.json"), JSON.stringify(req, null, 2));
 
@@ -82,7 +77,7 @@ export async function runLiveReview(req: ReviewRequest & { url: string }, renv: 
 			userDataDir: CHROME_PROFILE,
 			signal: ac.signal,
 			timeoutMs: timeoutMs(),
-			onReady: () => renv.onWaiting?.({ url, title: req.title, live: true }),
+			onReady: () => renv.onWaiting?.({ url, title: req.title, live: true, dir }),
 		});
 	} finally {
 		untrack();
@@ -143,7 +138,7 @@ export async function runLiveReview(req: ReviewRequest & { url: string }, renv: 
 /** Show a page of decisions, questions and diffs, and wait for the reviewer to submit. */
 export async function runReview(req: ReviewRequest, renv: ReviewEnv): Promise<ReviewOutcome> {
 	const { signal } = renv;
-	const dir = await reviewDir(renv.group);
+	const dir = await createReviewDir(renv.cwd, renv.group);
 
 	const diffs = await loadDiffs(req, renv.cwd);
 	let labels: Record<string, string> = {};
@@ -167,7 +162,7 @@ export async function runReview(req: ReviewRequest, renv: ReviewEnv): Promise<Re
 	await writeFile(join(dir, "url.txt"), `${server.url}\n`);
 
 	openBrowser(server.url);
-	renv.onWaiting?.({ url: server.url, title: req.title, live: false });
+	renv.onWaiting?.({ url: server.url, title: req.title, live: false, dir });
 	renv.onStatus?.(`리뷰 대기 중: ${server.url}`);
 
 	let outcome: Awaited<ReviewServer["outcome"]>;

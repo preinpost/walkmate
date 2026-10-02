@@ -15,9 +15,9 @@ async function isolated(t: { after(fn: () => Promise<void>): void }) {
 	t.after(() => rm(dir, { recursive: true, force: true }));
 	const env = {
 		...process.env, PATH: dir, Path: dir,
-		REVIEW_RECORDER_HOME: dir, REVIEW_RECORDER_CHROME: process.execPath,
-		REVIEW_RECORDER_WHISPER_BIN: "missing-whisper-cli", REVIEW_RECORDER_WHISPER_MODEL: join(dir, "missing-model"),
-		REVIEW_RECORDER_TRANSCRIBER: "auto", OPENAI_API_KEY: "",
+		WALKMATE_HOME: dir, WALKMATE_CHROME: process.execPath,
+		WALKMATE_WHISPER_BIN: "missing-whisper-cli", WALKMATE_WHISPER_MODEL: join(dir, "missing-model"),
+		WALKMATE_TRANSCRIBER: "auto", OPENAI_API_KEY: "",
 	};
 	return { dir, env };
 }

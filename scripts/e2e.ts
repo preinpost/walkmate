@@ -13,7 +13,7 @@ import { configFromEnv, transcribeClips } from "../src/core/transcribe.ts";
 import type { ReviewRequest } from "../src/core/types.ts";
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const dir = mkdtempSync(join(tmpdir(), "prr-e2e-"));
+const dir = mkdtempSync(join(tmpdir(), "walkmate-e2e-"));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Speech that refers to "this" while the script points at things.

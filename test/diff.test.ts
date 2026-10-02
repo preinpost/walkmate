@@ -33,7 +33,7 @@ test("parses hunks with line numbers", () => {
 });
 
 test("collects tracked and untracked changes", async () => {
-	const dir = mkdtempSync(join(tmpdir(), "prr-"));
+	const dir = mkdtempSync(join(tmpdir(), "walkmate-"));
 	const git = (...args: string[]) => execFileSync("git", args, { cwd: dir });
 	git("init", "-q");
 	git("config", "user.email", "t@t");
@@ -53,7 +53,7 @@ test("collects tracked and untracked changes", async () => {
 });
 
 test("works before the first commit", async () => {
-	const dir = mkdtempSync(join(tmpdir(), "prr-"));
+	const dir = mkdtempSync(join(tmpdir(), "walkmate-"));
 	execFileSync("git", ["init", "-q"], { cwd: dir });
 	writeFileSync(join(dir, "staged.txt"), "s\n");
 	writeFileSync(join(dir, "loose.txt"), "l\n");

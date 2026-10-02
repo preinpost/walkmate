@@ -6,7 +6,7 @@ import type { ClipInfo } from "../types.ts";
 import { env } from "../config.ts";
 import { distFile } from "./assets.ts";
 import { Capture, type ConsoleEntry, type NetEntry } from "./capture.ts";
-import { type Browser, launchChrome } from "./cdp.ts";
+import { type Browser, type Cdp, launchChrome } from "./cdp.ts";
 import type { Recorder, Recording } from "./mic.ts";
 
 /** What the page reports about an element. */
@@ -89,6 +89,13 @@ export interface DocEntry {
 	error?: string;
 }
 
+/** Internal seam used by the agent runtime; the recorder owns browser cleanup. */
+export interface LiveControl {
+	cdp: Cdp;
+	tabs(): { id: string; targetId: string; sessionId: string; url: string }[];
+	finish(status: LiveOutcome["status"]): Promise<void>;
+}
+
 export interface LiveOptions {
 	url: string;
 	title: string;
@@ -101,8 +108,10 @@ export interface LiveOptions {
 	signal?: AbortSignal;
 	timeoutMs?: number;
 	shotEveryMs?: number;
-	/** Called once the page is open, with the CDP port, for tests that drive the browser. */
-	onReady?: (info: { port: number; targetId: string }) => void;
+	/** Agent executions record screenshots and mask inputs independently of microphone state. */
+	agent?: boolean;
+	/** Called once the page is open; control is for the internal runtime, port is for CDP tests. */
+	onReady?: (info: { port: number; targetId: string; control: LiveControl }) => void;
 }
 
 interface Tab {
@@ -121,10 +130,10 @@ interface Tab {
 
 const BINDING = "__piReview";
 
-function pageScript(): string {
+function pageScript(agent = false): string {
 	const rrweb = distFile("@rrweb/record", "record.umd.min.cjs");
 	const live = readFileSync(new URL("../page/live.js", import.meta.url), "utf8");
-	const cfg = JSON.stringify({ canvasFps: Number(env("CANVAS_FPS") ?? 1) });
+	const cfg = JSON.stringify({ canvasFps: Number(env("CANVAS_FPS") ?? 1), maskAllInputs: agent });
 	// Load the UMD bundle as a CommonJS module so it does not touch the app's globals.
 	return `window.__piReviewCfg=${cfg};(function(){if(window.top!==window||window.__piRrweb||location.href==="about:blank")return;var module={exports:{}};var exports=module.exports;\n${rrweb}\n;window.__piRrweb=module.exports;})();\n${live}`;
 }
@@ -136,8 +145,8 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 	const shotsDir = join(opts.dir, "shots");
 	await mkdir(shotsDir, { recursive: true });
 
-	const script = pageScript();
-	const browser: Browser = await launchChrome({ userDataDir: opts.userDataDir, headless: opts.headless, args: opts.chromeArgs });
+	const script = pageScript(opts.agent);
+	const browser: Browser = await launchChrome({ userDataDir: opts.userDataDir, headless: opts.headless, args: opts.chromeArgs, signal: opts.signal });
 	const { cdp } = browser;
 
 	const events: LiveEvent[] = [];
@@ -247,6 +256,7 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 		clips.push({ idx: r.idx, offset: sec(r.handle.startedAt), mime: "audio/flac", file: r.file });
 	}
 	async function toggleRec() {
+		if (opts.agent) { toast("에이전트 실행 중에는 마이크를 사용하지 않습니다."); return; }
 		if (recBusy || busy) return;
 		recBusy = true;
 		try {
@@ -311,7 +321,7 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 		}
 	}
 	const ticker = setInterval(() => {
-		if (rec) shoot(activeTab, "tick");
+		if (rec || opts.agent) shoot(activeTab, "tick");
 	}, opts.shotEveryMs ?? 1500);
 
 	// ---------- tabs ----------
@@ -374,6 +384,7 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 	cdp.closed.then(() => settle("closed"));
 
 	const rrweb: LiveOutcome["rrweb"] = [];
+	const rrStreams = new Set<WriteStream>();
 	cdp.on("Runtime.bindingCalled", (p, sessionId) => {
 		if (p.name !== BINDING || !sessionId || settled) return;
 		const tab = tabs.get(sessionId);
@@ -403,6 +414,8 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 				if (!tab.rr) {
 					const file = join(opts.dir, `rrweb-tab${tab.n}.jsonl`);
 					tab.rr = createWriteStream(file);
+					rrStreams.add(tab.rr);
+					tab.rr.on("error", (err) => warnings.push(`rrweb: ${err.message}`));
 					rrweb.push({ tab: tab.n, file });
 				}
 				for (const e of msg.events) tab.rr.write(`${JSON.stringify(e)}\n`);
@@ -435,8 +448,8 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 					pins++;
 					shoot(tab, "pin", e.id);
 					broadcast();
-				} else if (rec && e.type === "click") setTimeout(() => shoot(tab, "click"), 350);
-				else if (rec && e.type === "nav") setTimeout(() => shoot(tab, "nav"), 900);
+				} else if ((rec || opts.agent) && e.type === "click") setTimeout(() => shoot(tab, "click"), 350);
+				else if ((rec || opts.agent) && e.type === "nav") setTimeout(() => shoot(tab, "nav"), 900);
 				return;
 			}
 		}
@@ -446,6 +459,7 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 		if (busy) return;
 		busy = status === "submitted" ? "제출 중…" : "취소 중…";
 		broadcast();
+		await Promise.all([...tabs.values()].map((tab) => evaluate(tab, "window.__piReviewFlush?.()")));
 		await stopRec().catch(() => {});
 		settle(status);
 	}
@@ -455,6 +469,7 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 	const timeout = opts.timeoutMs ? setTimeout(() => finish("timeout"), opts.timeoutMs) : undefined;
 
 	try {
+		if (opts.signal?.aborted) throw new Error("Session was cancelled before opening.");
 		await cdp.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
 		// Pages that existed before auto-attach (the first window) are attached by hand.
 		const { targetInfos } = await cdp.send<{ targetInfos: { targetId: string; type: string; url: string }[] }>("Target.getTargets");
@@ -476,7 +491,12 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 		setActive(tab);
 		await cdp.send("Page.navigate", { url: opts.url }, tab.sessionId);
 		await cdp.send("Page.bringToFront", {}, tab.sessionId).catch(() => {});
-		opts.onReady?.({ port: browser.port, targetId: tab.targetId });
+		if (opts.signal?.aborted) throw new Error("Session was cancelled while opening.");
+		opts.onReady?.({ port: browser.port, targetId: tab.targetId, control: {
+			cdp,
+			tabs: () => [...tabs.values()].filter((t) => t.ready).map((t) => ({ id: `t${t.n}`, targetId: t.targetId, sessionId: t.sessionId, url: t.url })),
+			finish,
+		} });
 
 		const raw = await done;
 		await stopRec().catch(() => {});
@@ -501,9 +521,20 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 		clearInterval(ticker);
 		if (timeout) clearTimeout(timeout);
 		opts.signal?.removeEventListener("abort", onAbort);
-		for (const tab of tabs.values()) tab.rr?.end();
+		await Promise.all([...rrStreams].map((stream) => new Promise<void>((resolve) => {
+			if (stream.writableFinished || stream.destroyed) resolve();
+			else stream.end(() => resolve());
+		})));
 		await cdp.send("Browser.close").catch(() => {});
 		cdp.close();
-		browser.process?.kill();
+		if (browser.process) {
+			const proc = browser.process;
+			await new Promise<void>((resolve) => {
+				if (proc.exitCode !== null || proc.signalCode !== null) { resolve(); return; }
+				const timer = setTimeout(() => { proc.kill("SIGKILL"); resolve(); }, 2000);
+				proc.once("exit", () => { clearTimeout(timer); resolve(); });
+				proc.kill();
+			});
+		}
 	}
 }
