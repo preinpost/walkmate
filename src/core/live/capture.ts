@@ -47,6 +47,52 @@ const MAX_ASSET_BYTES = 15 * 1024 * 1024;
 const MAX_ASSETS_TOTAL = 200 * 1024 * 1024;
 const TEXT_MIME = /json|text|xml|javascript|graphql|x-www-form-urlencoded/;
 
+const SECRET_KEY = /pass(?:word|wd)?|secret|token|otp|credential|api[-_]?key|authorization|cookie|private[-_]?key/i;
+const JWT = /\beyJ[\w-]{5,}\.[\w-]{5,}\.[\w-]{5,}/g;
+const FORM = /^[\w.%+\-[\]]+=[^&]*(?:&[\w.%+\-[\]]+=[^&]*)*$/;
+const REDACTED = "[redacted]";
+
+/**
+ * Masks credential-looking fields (password, token, secret, ...) and JWTs in captured request and
+ * response bodies, so a demonstrated login does not leave its password on disk. Best effort: other
+ * personal data in bodies is kept. Text without secrets is returned unchanged.
+ */
+export function redactSecrets(text: string): string {
+	let changed = false;
+	const mask = (value: unknown): unknown => {
+		if (Array.isArray(value)) return value.map(mask);
+		if (!value || typeof value !== "object") return value;
+		return Object.fromEntries(Object.entries(value).map(([key, v]) => {
+			if (SECRET_KEY.test(key) && (typeof v === "string" || typeof v === "number") && v !== "") { changed = true; return [key, REDACTED]; }
+			return [key, mask(v)];
+		}));
+	};
+	let out = text;
+	const trimmed = text.trim();
+	if (/^[[{]/.test(trimmed)) {
+		try {
+			const masked = JSON.stringify(mask(JSON.parse(trimmed)));
+			if (changed) out = masked;
+		} catch {
+			// Truncated or invalid JSON: mask "key": "value" pairs in place.
+			out = text.replace(/("([^"\\]*)"\s*:\s*)"(?:[^"\\]|\\.)*"/g, (pair, prefix: string, key: string) => SECRET_KEY.test(key) ? `${prefix}"${REDACTED}"` : pair);
+		}
+	} else if (FORM.test(trimmed)) {
+		const pairs = trimmed.split("&").map((pair) => {
+			const [key, value = ""] = pair.split("=", 2);
+			if (!value || !SECRET_KEY.test(decodeForm(key))) return pair;
+			changed = true;
+			return `${key}=${REDACTED}`;
+		});
+		if (changed) out = pairs.join("&");
+	}
+	return out.replace(JWT, REDACTED);
+}
+
+function decodeForm(value: string) {
+	try { return decodeURIComponent(value.replace(/\+/g, " ")); } catch { return value; }
+}
+
 /**
  * Network, console and assets of every tab: what rrweb does not record. API response bodies go to
  * network/, images and fonts to assets/ so the replay works without the dev server.
@@ -120,7 +166,7 @@ export class Capture {
 			method: p.request.method,
 			url: p.request.url,
 			type: p.type ?? "Other",
-			postData: p.request.postData?.slice(0, 4000),
+			postData: p.request.postData === undefined ? undefined : redactSecrets(p.request.postData).slice(0, 4000),
 			mono: p.timestamp,
 			wall: p.wallTime,
 			session: sessionId!,
@@ -161,7 +207,7 @@ export class Capture {
 	private async saveBody(e: NetEntry & { session: string }) {
 		const res = await this.cdp.send<{ body: string; base64Encoded: boolean }>("Network.getResponseBody", { requestId: e.id }, e.session).catch(() => undefined);
 		if (!res) return;
-		let text = res.base64Encoded ? Buffer.from(res.body, "base64").toString("utf8") : res.body;
+		let text = redactSecrets(res.base64Encoded ? Buffer.from(res.body, "base64").toString("utf8") : res.body);
 		const truncated = text.length > MAX_BODY_BYTES;
 		if (truncated) text = text.slice(0, MAX_BODY_BYTES);
 		const ext = /json/.test(e.mime ?? "") ? "json" : "txt";

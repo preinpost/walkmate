@@ -5,7 +5,8 @@
     "outDir": "dist",
     "rootDir": "src",
     "rewriteRelativeImportExtensions": true,
-    "sourceMap": false
+    "sourceMap": false,
+    "declaration": true
   },
-  "include": ["src/core/**/*.ts", "src/mcp/**/*.ts"]
+  "include": ["src/core/**/*.ts", "src/mcp/**/*.ts", "src/playwright/**/*.ts"]
 }

@@ -24,6 +24,7 @@ const html = `<!doctype html><title>Runtime fixture</title>
 <div data-testid="row-b"><button data-testid="duplicate" onclick="document.body.dataset.unsafe='yes'">Duplicate B</button></div>
 <button data-testid="popup" onclick="window.open('/popup')">Open popup</button>
 <button data-testid="dialog" onclick="if(confirm('Confirm fixture action?')) document.body.dataset.unsafe='yes'">Confirm</button>
+<button data-testid="later" onclick="setTimeout(()=>{document.body.insertAdjacentHTML('beforeend','<section data-testid=late-panel><button data-testid=late-go disabled onclick=&quot;this.textContent=\\'Late done\\'&quot;>Late go</button></section>');setTimeout(()=>document.querySelector('[data-testid=late-go]').disabled=false,300)},300)">Render later</button>
 <div style="height:1800px">Scrollable fixture</div>
 <script>
 document.querySelector('form').onsubmit=async(e)=>{
@@ -130,6 +131,51 @@ test("native MCP runtime fills, selects, checks, clicks, waits, asserts, switche
 	assert.equal(JSON.parse(events).clips.length, 0);
 	const streams = (await readdir(done.dir)).filter((file) => file.startsWith("rrweb-tab"));
 	for (const file of streams) assert.equal((await readFile(join(done.dir, file), "utf8")).includes(secret), false);
+});
+
+test("action batches run a known sequence in one call and stop at the first failure", { skip: !enabled }, async (t) => {
+	const run = await connect(t);
+	const batch = async (actions: Record<string, unknown>[], evidence?: string) =>
+		run.client.callTool({ name: "run_step", arguments: { id: run.info.id, actions, ...(evidence ? { evidence } : {}) } });
+	const ok = await batch([
+		{ type: "fill", target: target("email"), value: "batch@example.invalid" },
+		{ type: "fill", target: target("password"), value_env: "WALKMATE_E2E_PASSWORD" },
+		{ type: "click", target: target("login"), source_step: "login-submit" },
+		{ type: "wait", target: target("result"), condition: "text", expected: "Signed in:" },
+		{ type: "assert", target: target("result"), condition: "text", expected: "batch@example.invalid" },
+	], "summary");
+	assert.ok(!ok.isError, textOf(ok));
+	assert.equal(ok.content.some((content) => content.type === "image"), false);
+	const info = JSON.parse(textOf(ok));
+	assert.equal(info.completed, 5);
+	assert.match(info.snapshot.text, /Signed in: batch@example.invalid/);
+	assert.equal(textOf(ok).includes(secret), false);
+	const failed = await batch([
+		{ type: "assert", target: target("result"), condition: "text", expected: "Impossible result" },
+		{ type: "click", target: { ...target("duplicate"), scope: '[data-testid="row-a"]' } },
+	], "none");
+	assert.equal(failed.isError, true);
+	assert.ok(failed.content.some((content) => content.type === "image"));
+	assert.equal(JSON.parse(textOf(failed)).completed, 0);
+	const done = await run.finish();
+	assert.equal(done.status, "failed");
+	assert.equal(done.steps, 6);
+	const steps = JSON.parse(await readFile(join(done.dir, "steps.json"), "utf8"));
+	assert.ok(steps.every((step: { before?: string; after?: string }) => step.before && step.after), "batched steps still save replay screenshots");
+});
+
+test("batched steps wait for late containers and briefly for targets that are still rendering or disabled", { skip: !enabled }, async (t) => {
+	const run = await connect(t);
+	const result = await run.client.callTool({ name: "run_step", arguments: { id: run.info.id, evidence: "summary", actions: [
+		{ type: "click", target: target("later") },
+		{ type: "click", target: { ...target("late-go"), scope: '[data-testid="late-panel"]' } },
+		{ type: "wait", target: { ...target("late-go"), scope: '[data-testid="late-panel"]' }, condition: "text", expected: "Late done" },
+		{ type: "assert", target: target("late-missing"), condition: "hidden" },
+		{ type: "assert", target: { ...target("late-go"), scope: '[data-testid="no-such-panel"]' }, condition: "hidden" },
+	] } });
+	assert.ok(!result.isError, textOf(result));
+	assert.equal(JSON.parse(textOf(result)).completed, 5);
+	assert.equal((await run.finish()).status, "passed");
 });
 
 test("blank execution session can navigate and record without a predefined target", { skip: !enabled }, async (t) => {

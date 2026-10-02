@@ -126,7 +126,9 @@ test("instructions and tool description distinguish Walkmate usage requests from
 		assert.match(instructions, /Do not open a review for questions about Walkmate/);
 		assert.match(instructions, /requests to change its code or documentation/);
 		assert.match(instructions, /walkmate 켜봐/);
-		assert.match(instructions, /call review_start\(\{\}\)/);
+		assert.match(instructions, /call review_start\(\{ isolated \}\)/);
+		assert.match(instructions, /로그아웃된 임시 프로필\(isolated\)/);
+		assert.match(instructions, /Do not choose for the user/);
 		assert.match(instructions, /Do not ask for a URL/);
 		assert.match(instructions, /If tools are deferred, search for the Walkmate review_start MCP tool first/);
 		assert.match(instructions, /Do not save walkthrough-derived notes or skills in global agent memory/);
@@ -140,7 +142,8 @@ test("instructions and tool description distinguish Walkmate usage requests from
 		assert.match(description, /Do not use for questions about Walkmate/);
 		assert.match(description, /requests to change its code or documentation/);
 		assert.match(description, /walkmate 켜봐/);
-		assert.match(description, /call review_start\(\{\}\) immediately/);
+		assert.match(description, /call review_start\(\{ isolated \}\)/);
+		assert.match(description, /Live reviews require isolated; the user decides it/);
 		assert.match(description, /Do not ask for a URL, search files\/CLI\/apps, or scan ports/);
 		assert.deepEqual(tools.find((tool) => tool.name === "review_start")?.inputSchema.required, []);
 	} finally {
@@ -162,12 +165,13 @@ test("bare launch starts a blank live browser while explicit targets retain thei
 	});
 	try {
 		const cases = [
-			{ args: {}, expected: { title: "Walkmate", url: "about:blank" } },
-			{ args: { title: "시연" }, expected: { title: "시연", url: "about:blank" } },
-			{ args: { sections: [] }, expected: { title: "Walkmate", url: "about:blank", sections: [] } },
-			{ args: { url: "localhost:5173" }, expected: { title: "Walkmate", url: "localhost:5173" } },
+			{ args: { isolated: false }, expected: { title: "Walkmate", url: "about:blank", isolated: false } },
+			{ args: { title: "시연", isolated: true }, expected: { title: "시연", url: "about:blank", isolated: true } },
+			{ args: { sections: [], isolated: false }, expected: { title: "Walkmate", url: "about:blank", sections: [], isolated: false } },
+			{ args: { url: "localhost:5173", isolated: false }, expected: { title: "Walkmate", url: "localhost:5173", isolated: false } },
 			{ args: { sections: [{ id: "n1", kind: "note", title: "변경 사항" }] }, expected: { title: "Walkmate", sections: [{ id: "n1", kind: "note", title: "변경 사항" }] } },
-			{ args: { url: "http://app/", sections: [{ id: "n1", kind: "note", title: "확인할 부분" }] }, expected: { title: "Walkmate", url: "http://app/", sections: [{ id: "n1", kind: "note", title: "확인할 부분" }] } },
+			{ args: { url: "http://app/", isolated: false, sections: [{ id: "n1", kind: "note", title: "확인할 부분" }] }, expected: { title: "Walkmate", url: "http://app/", isolated: false, sections: [{ id: "n1", kind: "note", title: "확인할 부분" }] } },
+			{ args: { url: "localhost:5173/login", isolated: true }, expected: { title: "Walkmate", url: "localhost:5173/login", isolated: true } },
 		];
 		for (const { args, expected } of cases) {
 			const started = await client.callTool({ name: "review_start", arguments: args });
@@ -179,11 +183,37 @@ test("bare launch starts a blank live browser while explicit targets retain thei
 				assert.match(textOf(started), /microphone is off/);
 			}
 			const id = /Review (r\d+)/.exec(textOf(started))?.[1];
-			const busy = await client.callTool({ name: "review_start", arguments: {} });
+			const busy = await client.callTool({ name: "review_start", arguments: { isolated: false } });
 			assert.equal(busy.isError, true);
 			const cancelled = await client.callTool({ name: "review_cancel", arguments: { id } });
 			assert.ok(!cancelled.isError, textOf(cancelled));
 		}
+	} finally {
+		await shutdown();
+		await client.close();
+	}
+});
+
+test("live reviews ask the user about isolated before opening; document reviews do not", async () => {
+	const requests: ReviewRequest[] = [];
+	const { client, shutdown } = await connect({ runReview: async (req) => {
+		requests.push(req);
+		return { text: "ok", details: { status: "submitted", title: req.title, dir: "test", mode: req.url ? "live" : "doc" } };
+	} });
+	try {
+		for (const args of [{}, { url: "localhost:5173" }, { title: "시연", sections: [] }]) {
+			const asked = await client.callTool({ name: "review_start", arguments: args });
+			assert.equal(asked.isError, true);
+			assert.match(textOf(asked), /Not opened yet/);
+			assert.match(textOf(asked), /로그인된 평소 프로필로 열까요, 로그아웃된 임시 프로필\(isolated\)로 열까요\?/);
+			assert.match(textOf(asked), /Do not choose for them/);
+		}
+		assert.equal(requests.length, 0, "nothing opens until the user decides");
+		const doc = await client.callTool({ name: "review_start", arguments: { sections: [{ id: "n1", kind: "note", title: "변경" }] } });
+		assert.ok(!doc.isError, textOf(doc));
+		const bad = await client.callTool({ name: "review_start", arguments: { isolated: "yes" } });
+		assert.equal(bad.isError, true);
+		assert.match(textOf(bad), /isolated must be a boolean/);
 	} finally {
 		await shutdown();
 		await client.close();
@@ -199,7 +229,8 @@ test("prompts tell the agent to start and keep waiting", async () => {
 	assert.ok(msg.type === "text" && /review_start/.test(msg.text) && /review_wait/.test(msg.text) && /localhost:5173/.test(msg.text));
 	const blank = await client.getPrompt({ name: "live_review", arguments: {} });
 	const blankMsg = blank.messages[0].content;
-	assert.ok(blankMsg.type === "text" && /review_start\(\{\}\)/.test(blankMsg.text) && /Do not ask for a URL/.test(blankMsg.text));
+	assert.ok(blankMsg.type === "text" && /review_start/.test(blankMsg.text) && /Do not ask for a URL/.test(blankMsg.text) && /logged-out temporary one/.test(blankMsg.text));
+	assert.ok(msg.type === "text" && /pass isolated accordingly/.test(msg.text));
 	assert.equal(prompts.find((prompt) => prompt.name === "live_review")?.arguments?.find((arg) => arg.name === "url")?.required, false);
 	await shutdown();
 	await client.close();

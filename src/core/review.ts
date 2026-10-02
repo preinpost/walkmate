@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CHROME_PROFILE, env } from "./config.ts";
 import { ffmpegRecorder } from "./live/mic.ts";
@@ -66,6 +67,9 @@ export async function runLiveReview(req: ReviewRequest & { url: string }, renv: 
 	const untrack = (renv.track ?? noTrack)({ close: forward });
 	renv.onStatus?.(`라이브 리뷰 중: ${url}`);
 
+	// A clean profile starts logged out, so the demonstration includes login; nothing outlives the review.
+	const profile = req.isolated ? await mkdtemp(join(tmpdir(), "walkmate-review-chrome-")) : CHROME_PROFILE;
+	let leftover = false;
 	let outcome: Awaited<ReturnType<typeof runLiveSession>>;
 	try {
 		outcome = await runLiveSession({
@@ -74,7 +78,7 @@ export async function runLiveReview(req: ReviewRequest & { url: string }, renv: 
 			points,
 			dir,
 			recorder: ffmpegRecorder,
-			userDataDir: CHROME_PROFILE,
+			userDataDir: profile,
 			signal: ac.signal,
 			timeoutMs: timeoutMs(),
 			onReady: () => renv.onWaiting?.({ url, title: req.title, live: true, dir }),
@@ -82,7 +86,9 @@ export async function runLiveReview(req: ReviewRequest & { url: string }, renv: 
 	} finally {
 		untrack();
 		renv.signal?.removeEventListener("abort", forward);
+		if (req.isolated) await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch(() => { leftover = true; });
 	}
+	if (leftover) outcome.warnings.push(`임시 Chrome 프로필을 지우지 못했습니다. Chrome이 종료된 뒤 삭제하세요: ${profile}`);
 
 	await writeFile(join(dir, "events.json"), JSON.stringify(outcome, null, 2));
 	if (outcome.status === "aborted") throw new Error("리뷰가 중단되었습니다.");

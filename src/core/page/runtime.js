@@ -25,15 +25,17 @@
     let root = document;
     if (target.scope) {
       const scopes = document.querySelectorAll(target.scope);
-      if (scopes.length !== 1) throw new Error("scope must match exactly one container.");
+      if (scopes.length > 1) throw new Error("scope must match exactly one container.");
+      // A container that has not rendered yet means the target is absent, so wait can keep polling.
       root = scopes[0];
     }
     let elements;
     if (target.kind === "ref") {
       const el = refs.get(target.value);
       if (!el?.isConnected) throw new Error("Stale element ref. Observe again and choose a current ref.");
-      elements = root.contains(el) ? [el] : [];
-    } else if (target.kind === "testid") elements = [...root.querySelectorAll("[data-testid]")].filter((el) => el.getAttribute("data-testid") === target.value);
+      elements = root?.contains(el) ? [el] : [];
+    } else if (!root) elements = [];
+    else if (target.kind === "testid") elements = [...root.querySelectorAll("[data-testid]")].filter((el) => el.getAttribute("data-testid") === target.value);
     else if (target.kind === "css") elements = [...root.querySelectorAll(target.value)];
     else elements = [...root.querySelectorAll("button,a,input,select,textarea,[role]")].filter((el) => role(el) === target.value &&
       (target.name === undefined || name(el) === target.name));

@@ -10,6 +10,8 @@ import { MUTATING, parseRunAction, recordedAction, type RunAction, type RunResul
 
 const DOM_SCRIPT = readFileSync(new URL("../page/runtime.js", import.meta.url), "utf8");
 const message = (err: unknown) => err instanceof Error ? err.message : String(err);
+const ACTIONABLE_MS = 5000;
+const RETRYABLE = /Target matches 0 elements|Target is (?:disabled|not visible|covered)/;
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export interface BrowserRun {
@@ -226,6 +228,19 @@ export async function startBrowserRun(req: RunStart, signal?: AbortSignal): Prom
 			requestSignal?.removeEventListener("abort", abortRequest);
 		}
 	}
+	/** Waits briefly for a target that is still rendering; ambiguity and invalid targets fail at once. */
+	async function actionable(action: RunAction, args: string) {
+		const until = Date.now() + Math.min(ACTIONABLE_MS, action.timeout_ms! / 2);
+		while (true) {
+			try {
+				return await evaluate<{ x: number; y: number; checked?: boolean }>(`window.__walkmateRuntime.prepare(${args}, ${JSON.stringify(action.type)})`);
+			} catch (err) {
+				if (!RETRYABLE.test(message(err)) || Date.now() >= until) throw err;
+			}
+			await sleep(100);
+			ensureActive();
+		}
+	}
 	async function perform(action: RunAction) {
 		const args = JSON.stringify(action.target);
 		const send = (method: string, params: object) => { ensureActive(); return control.cdp.send(method, params, tab().sessionId); };
@@ -253,7 +268,7 @@ export async function startBrowserRun(req: RunStart, signal?: AbortSignal): Prom
 				ensureActive();
 			} while (true);
 		}
-		const position = await evaluate<{ x: number; y: number; checked?: boolean }>(`window.__walkmateRuntime.prepare(${args}, ${JSON.stringify(action.type)})`);
+		const position = await actionable(action, args);
 		if (action.type === "fill" || action.type === "select") {
 			const value = action.value_env ? process.env[action.value_env] : action.value;
 			if (value === undefined) throw new Error("The requested input environment variable is not configured.");

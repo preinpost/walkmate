@@ -51,6 +51,11 @@ export const ReviewParamsSchema = {
 			items: SectionSchema,
 			description: "Required for a document review; optional review points for a live review.",
 		},
+		isolated: {
+			type: "boolean",
+			description: "Required for live reviews; ask the user. true: record in a temporary clean Chrome profile that starts logged out and is removed afterwards, " +
+				"so the demonstration includes login. false: the shared profile, which may already be logged in and keeps login between reviews. Ignored for document reviews.",
+		},
 	},
 	required: ["title"],
 	additionalProperties: false,
@@ -72,6 +77,8 @@ export interface ReviewRequest {
 	url?: string;
 	summary?: string;
 	sections?: Section[];
+	/** Live review in a temporary clean profile instead of the shared login profile. */
+	isolated?: boolean;
 }
 
 /** Check a request from a client that may not validate against the schema. Throws with a readable message. */
@@ -92,6 +99,10 @@ export function parseReviewRequest(input: unknown): ReviewRequest {
 	if (!input || typeof input !== "object") fail("expected an object");
 	const o = input as Record<string, unknown>;
 	const req: ReviewRequest = { title: str(o.title, "title", false)!, url: str(o.url, "url"), summary: str(o.summary, "summary") };
+	if (o.isolated !== undefined) {
+		if (typeof o.isolated !== "boolean") fail("isolated must be a boolean");
+		req.isolated = o.isolated as boolean;
+	}
 	if (o.sections !== undefined) {
 		if (!Array.isArray(o.sections)) fail("sections must be an array");
 		req.sections = (o.sections as Record<string, unknown>[]).map((s, i) => {

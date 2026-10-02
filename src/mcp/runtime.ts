@@ -1,6 +1,6 @@
 import type { CallToolResult, ListToolsResult } from "@modelcontextprotocol/server";
 import { startBrowserRun, screenshotBytes, type BrowserRun } from "../core/runtime/run.ts";
-import { KEYS, parseRunStart, type Snapshot } from "../core/runtime/types.ts";
+import { KEYS, parseRunAction, parseRunStart, type RunStep, type Snapshot, type StepResult } from "../core/runtime/types.ts";
 
 const TARGET_SCHEMA = {
 	type: "object", properties: {
@@ -28,6 +28,12 @@ const ACTION_SCHEMA = {
 	}, required: ["type"], additionalProperties: false,
 };
 
+const EVIDENCE = ["full", "summary", "none"] as const;
+type Evidence = typeof EVIDENCE[number];
+const MAX_BATCH = 50;
+const SUMMARY_TEXT = 1000;
+const message = (err: unknown) => err instanceof Error ? err.message : String(err);
+
 export function createRunTools(opts: { cwd: string; reviewBusy(): boolean; startRun?: typeof startBrowserRun }) {
 	const runs = new Map<string, { run: BrowserRun; ac: AbortController }>();
 	let starting = false;
@@ -54,11 +60,19 @@ export function createRunTools(opts: { cwd: string; reviewBusy(): boolean; start
 		},
 		{
 			name: "run_step",
-			description: "Perform one recorded browser action in a Walkmate run. Omit action to observe. " +
+			description: "Perform recorded browser actions in a Walkmate run. Omit action and actions to observe. " +
+				"Pass actions (up to 50) to run a known sequence in one call: steps execute in order and stop at the first failure; only the last (or failed) step returns page evidence. " +
+				"Prefer actions for E2E skills with stable testid/css/role targets; refs require a current snapshot, so use single steps when you must choose from what you see. " +
 				"Use current refs or stable testids; ambiguous targets fail instead of clicking the first match. No arbitrary JavaScript or coordinate replay. " +
-				"Every step returns updated page evidence and screenshots. After a failure only observe or finish is allowed; do not blindly retry state changes. " +
+				"evidence controls returned evidence: full (elements + screenshot, default), summary (url/title/text excerpt, no screenshot) or none. Failed steps always return full evidence; every step still saves before/after screenshots for replay. " +
+				"After a failure only observe or finish is allowed; do not blindly retry state changes. " +
 				"Use wait for readiness and assert for success criteria. Input values are masked in step and DOM recordings, but screenshots/network bodies may contain secrets.",
-			inputSchema: { type: "object", properties: { id: { type: "string" }, action: ACTION_SCHEMA }, required: ["id"], additionalProperties: false },
+			inputSchema: { type: "object", properties: {
+				id: { type: "string" },
+				action: ACTION_SCHEMA,
+				actions: { type: "array", items: ACTION_SCHEMA, minItems: 1, maxItems: MAX_BATCH, description: "Sequence executed in one call, stopping at the first failure. Do not pass action as well." },
+				evidence: { type: "string", enum: [...EVIDENCE], description: "Evidence for the returned (last or failed) step. Default full. Failures always return full." },
+			}, required: ["id"], additionalProperties: false },
 		},
 		{
 			name: "run_finish",
@@ -97,9 +111,42 @@ export function createRunTools(opts: { cwd: string; reviewBusy(): boolean; start
 		const entry = runs.get(args.id);
 		if (!entry) throw new Error(`No run ${args.id}. Start one with run_start.`);
 		if (name === "run_step") {
-			for (const field of Object.keys(args)) if (!["id", "action"].includes(field)) throw new Error(`Unknown field: ${field}.`);
-			const result = await entry.run.step(args.action ?? { type: "observe" }, signal);
-			return evidence({ id: args.id, dir: entry.run.dir, ...result }, result.snapshot, result.step.status === "failed");
+			for (const field of Object.keys(args)) if (!["id", "action", "actions", "evidence"].includes(field)) throw new Error(`Unknown field: ${field}.`);
+			if (args.evidence !== undefined && !EVIDENCE.includes(args.evidence as Evidence)) throw new Error(`evidence must be one of ${EVIDENCE.join(", ")}.`);
+			const level = (args.evidence ?? "full") as Evidence;
+			if (args.actions === undefined) {
+				const result = await entry.run.step(args.action ?? { type: "observe" }, signal);
+				const failed = result.step.status === "failed";
+				return shown({ id: args.id, dir: entry.run.dir, step: result.step }, result.snapshot, failed ? "full" : level, failed);
+			}
+			if (args.action !== undefined) throw new Error("Pass either action or actions, not both.");
+			if (!Array.isArray(args.actions) || !args.actions.length || args.actions.length > MAX_BATCH) throw new Error(`actions must be a list of 1 to ${MAX_BATCH} actions.`);
+			// Reject the whole sequence before acting when any entry is malformed.
+			args.actions.forEach((action, i) => {
+				try { parseRunAction(action); } catch (err) { throw new Error(`actions[${i}]: ${message(err)}`); }
+			});
+			const done: RunStep[] = [];
+			let last: StepResult | undefined;
+			let error: string | undefined;
+			for (const action of args.actions) {
+				if (signal.aborted) { error = "Step request was cancelled."; break; }
+				try { last = await entry.run.step(action, signal); } catch (err) {
+					if (!done.length) throw err;
+					error = message(err);
+					break;
+				}
+				done.push(last.step);
+				if (last.step.status === "failed") break;
+			}
+			const failed = error !== undefined || last?.step.status === "failed";
+			return shown({
+				id: args.id, dir: entry.run.dir, status: failed ? "failed" : "ok",
+				completed: done.filter((step) => step.status === "ok").length, total: args.actions.length,
+				steps: done.map(({ id, action, status, duration_ms, error }) => ({ id, type: action.type, status, duration_ms,
+					...(action.source_step ? { source_step: action.source_step } : {}), ...(error ? { error } : {}) })),
+				...(error ? { error } : {}),
+				...(failed ? { next: "Stopped at the failure; remaining actions were not run. Observe or finish; start a new run to retry." } : {}),
+			}, last?.snapshot, failed ? "full" : level, failed);
 		}
 		if (name === "run_finish") {
 			for (const field of Object.keys(args)) if (!["id", "cancel"].includes(field)) throw new Error(`Unknown field: ${field}.`);
@@ -119,6 +166,15 @@ export function createRunTools(opts: { cwd: string; reviewBusy(): boolean; start
 		]);
 	}
 	return { tools, call, active, shutdown };
+}
+
+/** Returns step evidence at the requested detail. Screenshots stay on disk for replay either way. */
+function shown(value: Record<string, unknown>, snapshot: Snapshot | undefined, level: Evidence, isError: boolean) {
+	if (!snapshot || level === "none") return evidence(value, undefined, isError);
+	if (level === "full") return evidence({ ...value, snapshot }, snapshot, isError);
+	const { tab, url, title, text, elements, tabs } = snapshot;
+	return evidence({ ...value, snapshot: { tab, url, title, tabs, element_count: elements.length,
+		text: text.length > SUMMARY_TEXT ? `${text.slice(0, SUMMARY_TEXT)}…` : text } }, undefined, isError);
 }
 
 async function evidence(value: unknown, snapshot?: Snapshot, isError = false): Promise<CallToolResult> {
