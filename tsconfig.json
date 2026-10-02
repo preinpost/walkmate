@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "paths": {
+      "@earendil-works/pi-coding-agent": ["/Users/ms/.local/share/mise/installs/node/26.10.0/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"],
+      "@earendil-works/pi-tui": ["/Users/ms/.local/share/mise/installs/node/26.10.0/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.d.ts"],
+      "typebox": ["/Users/ms/.local/share/mise/installs/node/26.10.0/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/typebox/build/index.d.mts"]
+    }
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}
