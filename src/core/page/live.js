@@ -129,7 +129,7 @@
   let hoverKey = "";
   let lastPtr = { x: 0, y: 0 };
   addEventListener("pointermove", throttle((e) => {
-    if (ours(e) || pinMode) return;
+    if (ours(e) || pinMode || drag || draft) return;
     lastPtr = { x: Math.round(e.clientX), y: Math.round(e.clientY) };
     const d = describe(e.target);
     const k = keyOf(d);
@@ -143,7 +143,7 @@
   }, 400), { capture: true, passive: true });
 
   addEventListener("click", (e) => {
-    if (ours(e) || pinMode) return;
+    if (ours(e) || pinMode || drag || swallowClick) return;
     ev("click", { x: Math.round(e.clientX), y: Math.round(e.clientY), d: describe(e.target) });
   }, true);
 
@@ -170,6 +170,7 @@
   const nav = () => {
     if (location.href === lastUrl) return;
     lastUrl = location.href;
+    clearPinMarks();
     ev("nav", { url: location.href, title: document.title });
   };
   for (const m of ["pushState", "replaceState"]) {
@@ -242,7 +243,7 @@
     .time { font-variant-numeric: tabular-nums; min-width: 3.2em; color: #bbb; }
     .lvl { width: 40px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.15); overflow: hidden; }
     .lvl i { display: block; height: 100%; width: 0; background: #e5484d; transition: width 90ms; }
-    .panel, .note { width: 340px; max-height: 50vh; overflow: auto; padding: 8px; border-radius: 12px; background: rgba(28,28,30,.95); color: #f2f2f2;
+    .panel { width: 340px; max-height: 50vh; overflow: auto; padding: 8px; border-radius: 12px; background: rgba(28,28,30,.95); color: #f2f2f2;
                     box-shadow: 0 6px 24px rgba(0,0,0,.25); }
     .pt { display: block; width: 100%; text-align: left; margin: 2px 0; padding: 8px 10px; background: transparent; }
     .pt.active { background: rgba(47,111,237,.45); }
@@ -252,6 +253,14 @@
     .hint { color: #aaa; margin: 2px 2px 6px; }
     .hl { position: fixed; pointer-events: none; z-index: 2147483646; border: 3px solid #f5a524; border-radius: 4px;
           background: rgba(245,165,36,.12); display: none; }
+    .hl.area { border-style: dashed; background: rgba(245,165,36,.08); }
+    .memo { position: fixed; z-index: 2147483647; width: 300px; padding: 8px; border-radius: 10px; background: rgba(28,28,30,.96);
+            color: #f2f2f2; box-shadow: 0 6px 24px rgba(0,0,0,.3); }
+    .marks { position: absolute; left: 0; top: 0; z-index: 2147483645; pointer-events: none; }
+    .mark { position: absolute; border: 2px solid #f5a524; border-radius: 4px; }
+    .mark.area { border-style: dashed; }
+    .mark b { position: absolute; top: -20px; left: -2px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+              padding: 1px 6px; border-radius: 6px; background: #f5a524; color: #111; font-size: 11px; font-weight: 600; }
     .toast { padding: 6px 10px; border-radius: 8px; background: rgba(28,28,30,.92); color: #f2f2f2; display: none; }
     [hidden] { display: none !important; }
   `;
@@ -262,14 +271,15 @@
     host.setAttribute("data-pi-review", "");
     const root = host.attachShadow({ mode: "closed" });
     root.innerHTML = `<style>${CSS}</style>
+      <div class="marks"></div>
       <div class="hl"></div>
+      <div class="memo" hidden><div class="hint"></div><input placeholder="메모 (비워도 됩니다)"></div>
       <div class="wrap">
         <div class="toast"></div>
-        <div class="note" hidden><div class="hint">📌 핀 메모 (Enter 저장, Esc 생략)</div><input></div>
         <div class="panel" hidden></div>
         <div class="bar">
           <button class="rec" title="Alt+R">● 녹음</button><span class="time">0:00</span><span class="lvl"><i></i></span>
-          <button class="pin" title="Alt+P: 요소를 찍어 '여기'를 지정">📌 핀</button>
+          <button class="pin" title="Alt+P. 클릭하면 요소, 드래그하면 영역을 핀으로. Alt+드래그는 언제든 영역 핀">📌 핀</button>
           <button class="pts" hidden>포인트</button>
           <button class="submit primary">제출</button>
           <button class="cancel" title="리뷰 취소">✕</button>
@@ -278,7 +288,8 @@
       </div>`;
     const $ = (s) => root.querySelector(s);
     ui = { root, wrap: $(".wrap"), rec: $(".rec"), time: $(".time"), lvl: $(".lvl i"), pin: $(".pin"), pts: $(".pts"),
-           submit: $(".submit"), cancel: $(".cancel"), panel: $(".panel"), note: $(".note"), input: $(".note input"), hl: $(".hl"), toast: $(".toast") };
+           submit: $(".submit"), cancel: $(".cancel"), panel: $(".panel"), hl: $(".hl"), toast: $(".toast"),
+           marks: $(".marks"), memo: $(".memo"), memoHint: $(".memo .hint"), memoInput: $(".memo input") };
     ui.rec.onclick = () => post({ kind: "cmd", cmd: "rec" });
     ui.pin.onclick = () => setPinMode(!pinMode);
     ui.pts.onclick = () => (ui.panel.hidden = !ui.panel.hidden);
@@ -293,11 +304,13 @@
       post({ kind: "cmd", cmd: "point", id: p.id });
       if (p.url) location.href = new URL(p.url, location.href).href;
     };
-    ui.input.onkeydown = (e) => {
-      e.stopPropagation();
-      if (e.key === "Enter") finishPin(ui.input.value);
-      else if (e.key === "Escape") finishPin("");
+    ui.memoInput.onkeydown = (e) => {
+      if (e.isComposing) return;
+      if (e.key === "Enter") finishDraft(true);
+      else if (e.key === "Escape") finishDraft(false);
     };
+    // Typing in our inputs must not trigger the app's keyboard shortcuts.
+    for (const type of ["keydown", "keyup", "keypress", "input"]) host.addEventListener(type, (e) => e.stopPropagation());
     document.documentElement.appendChild(host);
     render();
   };
@@ -338,50 +351,164 @@
     ui.toastTimer = setTimeout(() => (ui.toast.style.display = "none"), ms);
   };
 
-  // ---------- Pin: click an element to say "this one" precisely ----------
+  // ---------- Pins: click an element or drag an area, then type a memo next to it ----------
+  // In pin mode (📌 or Alt+P) a click pins the element under the pointer and a drag pins an area.
+  // Alt+drag pins an area at any time. Pins stay outlined on the page until it navigates away.
 
-  let pinTarget, pinId;
-  const showBox = (r) => {
+  const DRAG_MIN = 6;
+  let drag = null; // { x0, y0, x1, y1 } while the pointer is down for a pin
+  let swallowClick = false;
+  let draft = null; // pin waiting for its memo
+
+  const toRect = (d) => [Math.min(d.x0, d.x1), Math.min(d.y0, d.y1), Math.abs(d.x1 - d.x0), Math.abs(d.y1 - d.y0)].map(Math.round);
+  const dragged = (d) => Math.hypot(d.x1 - d.x0, d.y1 - d.y0) >= DRAG_MIN;
+  const showBox = (r, area) => {
+    ui.hl.classList.toggle("area", !!area);
     Object.assign(ui.hl.style, { display: "block", left: `${r[0] - 3}px`, top: `${r[1] - 3}px`, width: `${r[2] + 6}px`, height: `${r[3] + 6}px` });
   };
+  const hideBox = () => (ui.hl.style.display = "none");
+
   function setPinMode(on) {
     pinMode = on;
     document.documentElement.style.cursor = on ? "crosshair" : "";
-    if (!on && !pinId) ui.hl.style.display = "none";
+    if (!on && !draft && !drag) hideBox();
     render();
   }
+
+  // Text of every text node that shows inside the rectangle.
+  const textIn = (root, [x, y, w, h]) => {
+    const out = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    let len = 0;
+    for (let n = walker.nextNode(), i = 0; n && i < 3000 && len < 300; n = walker.nextNode(), i++) {
+      const t = clean(n.textContent);
+      if (!t) continue;
+      range.selectNodeContents(n);
+      const hit = [...range.getClientRects()].some((r) => r.right > x && r.left < x + w && r.bottom > y && r.top < y + h);
+      if (hit) { out.push(t); len += t.length + 1; }
+    }
+    const s = out.join(" ");
+    return s.length > 300 ? `${s.slice(0, 297)}…` : s;
+  };
+
+  // An area: the smallest element holding everything in it, what is inside, and the visible text.
+  const describeArea = (r) => {
+    const [x, y, w, h] = r;
+    const els = [];
+    for (const fx of [0.1, 0.5, 0.9]) for (const fy of [0.1, 0.5, 0.9]) {
+      const el = document.elementFromPoint(x + w * fx, y + h * fy);
+      if (el && el !== host) els.push(el);
+    }
+    let common = els[0];
+    while (common && !els.every((el) => common.contains(el))) common = common.parentElement;
+    const base = describe(common || els[0]) || { tag: "?", text: "", rect: r };
+    const inside = [];
+    const seen = new Set([keyOf(base)]);
+    for (const el of els) {
+      const d = describe(el);
+      const k = keyOf(d);
+      if (!d || seen.has(k)) continue;
+      seen.add(k);
+      inside.push({ tag: d.tag, text: d.text, comps: d.comps, file: d.file });
+    }
+    return { ...base, rect: r, area: true, inside: inside.slice(0, 6), areaText: textIn(common || document.body, r) };
+  };
+
+  function draftPin(d, at, area, x, y) {
+    draft = { id: `p${at}`, d, at, area, x: Math.round(x), y: Math.round(y) };
+    showBox(d.rect, area);
+    // Put the memo right under the pin, or above it when there is no room.
+    const [rx, ry, rw, rh] = d.rect;
+    const mw = 300, mh = 76;
+    let top = ry + rh + 10;
+    if (top + mh > innerHeight - 8) top = Math.max(8, ry - mh - 10);
+    Object.assign(ui.memo.style, { left: `${Math.min(Math.max(8, rx), innerWidth - mw - 8)}px`, top: `${top}px` });
+    ui.memoHint.textContent = `📌 ${state.pins + 1} · ${area ? "영역" : (d.comps?.[0] ?? d.tag)} · Enter 저장 · Esc 취소`;
+    ui.memoInput.value = "";
+    ui.memo.hidden = false;
+    ui.memoInput.focus();
+  }
+
+  function finishDraft(save) {
+    const p = draft;
+    if (!p) return;
+    draft = null;
+    ui.memo.hidden = true;
+    hideBox();
+    if (!save) return;
+    const text = clean(ui.memoInput.value).slice(0, 500) || undefined;
+    addMark(state.pins + 1, p.d.rect, p.area, text);
+    // Timestamped when the pin was drawn, not when the memo was saved: that is when they were talking about it.
+    ev("pin", { at: p.at, id: p.id, x: p.x, y: p.y, d: p.d, area: p.area || undefined, text });
+  }
+
+  function addMark(n, r, area, text) {
+    const m = document.createElement("div");
+    m.className = area ? "mark area" : "mark";
+    Object.assign(m.style, { left: `${r[0] + scrollX}px`, top: `${r[1] + scrollY}px`, width: `${r[2]}px`, height: `${r[3]}px` });
+    const label = document.createElement("b");
+    label.textContent = text ? `${n} ${text}` : String(n);
+    m.appendChild(label);
+    ui.marks.appendChild(m);
+  }
+  function clearPinMarks() {
+    if (ui) ui.marks.textContent = "";
+  }
+
+  addEventListener("pointerdown", (e) => {
+    if (ours(e) || e.button !== 0) return;
+    // Clicking elsewhere keeps the pin being written, like leaving a comment box.
+    if (draft) finishDraft(true);
+    if (!pinMode && !e.altKey) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    drag = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY };
+  }, true);
   addEventListener("pointermove", (e) => {
-    if (!pinMode || ours(e)) return;
-    pinTarget = describe(e.target);
-    if (pinTarget) showBox(pinTarget.rect);
+    if (ours(e)) return;
+    if (drag) {
+      drag.x1 = e.clientX;
+      drag.y1 = e.clientY;
+      if (dragged(drag)) showBox(toRect(drag), true);
+      return;
+    }
+    if (pinMode && !draft) {
+      const d = describe(e.target);
+      if (d) showBox(d.rect);
+    }
   }, { capture: true, passive: true });
-  for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+  addEventListener("pointerup", (e) => {
+    if (!drag) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const d = drag;
+    drag = null;
+    // The click that follows belongs to the pin, not to the app.
+    swallowClick = true;
+    setTimeout(() => (swallowClick = false), 0);
+    setPinMode(false);
+    if (dragged(d)) draftPin(describeArea(toRect(d)), Date.now(), true, d.x1, d.y1);
+    else {
+      const desc = describe(document.elementFromPoint(d.x1, d.y1));
+      if (desc) draftPin(desc, Date.now(), false, d.x1, d.y1);
+    }
+  }, true);
+  for (const type of ["mousedown", "mouseup", "click", "dblclick"]) {
     addEventListener(type, (e) => {
-      if (!pinMode || ours(e)) return;
+      if (ours(e) || !(drag || swallowClick || pinMode)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      if (type !== "click") return;
-      const d = describe(e.target);
-      if (!d) return;
-      pinId = `p${Date.now()}`;
-      showBox(d.rect);
-      setPinMode(false);
-      ev("pin", { id: pinId, x: Math.round(e.clientX), y: Math.round(e.clientY), d });
-      ui.note.hidden = false;
-      ui.input.value = "";
-      ui.input.focus();
     }, true);
   }
-  function finishPin(note) {
-    if (pinId && note.trim()) ev("pin-note", { id: pinId, text: note.trim().slice(0, 500) });
-    pinId = undefined;
-    ui.note.hidden = true;
-    ui.hl.style.display = "none";
-  }
+  addEventListener("dragstart", (e) => {
+    if (drag || pinMode) e.preventDefault();
+  }, true);
 
   addEventListener("keydown", (e) => {
     if (e.altKey && !e.metaKey && !e.ctrlKey && e.code === "KeyR") { e.preventDefault(); post({ kind: "cmd", cmd: "rec" }); }
     else if (e.altKey && !e.metaKey && !e.ctrlKey && e.code === "KeyP") { e.preventDefault(); setPinMode(!pinMode); }
+    else if (e.key === "Escape" && draft) finishDraft(false);
     else if (e.key === "Escape" && pinMode) setPinMode(false);
   }, true);
 

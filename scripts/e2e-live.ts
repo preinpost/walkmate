@@ -24,7 +24,7 @@ execFileSync("say", [
 	"Yuna",
 	"-o",
 	speech,
-	"이 범례 색이 너무 비슷해서 구분이 안 돼요. [[slnc 1800]] 여기 숫자는 오른쪽 정렬해 주세요. [[slnc 1800]] 청구서 화면은 로딩이 너무 길어요.",
+	"이 범례 색이 너무 비슷해서 구분이 안 돼요. [[slnc 1800]] 여기 숫자는 오른쪽 정렬해 주세요. [[slnc 1800]] 이 영역은 간격이 너무 좁아요. [[slnc 1800]] 청구서 화면은 로딩이 너무 길어요.",
 ]);
 
 // The "microphone" plays the speech from the moment recording starts.
@@ -133,7 +133,17 @@ try {
 	await sleep(300);
 	await cdp("Input.insertText", { text: "오른쪽 정렬" });
 	await cdp("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
-	await sleep(2600);
+	await sleep(2400);
+	// Area pin: Alt+drag around the legend and the table, the way a person frames them, then a memo.
+	const [x0, y0, x1, y1] = await js(`(() => { const a = document.querySelector("#legend").getBoundingClientRect(), b = document.querySelector("table").getBoundingClientRect(); return [Math.min(a.left, b.left) - 12, a.top - 8, b.right + 16, b.bottom + 10]; })()`);
+	await cdp("Input.dispatchMouseEvent", { type: "mousePressed", x: x0, y: y0, button: "left", buttons: 1, clickCount: 1, modifiers: 1 });
+	for (let i = 1; i <= 5; i++)
+		await cdp("Input.dispatchMouseEvent", { type: "mouseMoved", x: x0 + ((x1 - x0) * i) / 5, y: y0 + ((y1 - y0) * i) / 5, buttons: 1, modifiers: 1 });
+	await cdp("Input.dispatchMouseEvent", { type: "mouseReleased", x: x1, y: y1, button: "left", buttons: 0, clickCount: 1, modifiers: 1 });
+	await sleep(300);
+	await cdp("Input.insertText", { text: "간격 넓히기" });
+	await cdp("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+	await sleep(2400);
 	await click("#inv");
 	await sleep(400);
 	await move("#slow");
@@ -162,6 +172,7 @@ try {
 	ws.close();
 
 	const outcome = await session;
+	if (process.env.E2E_DEBUG) console.log("pins:", JSON.stringify(outcome.events.filter((e) => e.type === "pin"), null, 1));
 	console.log("status:", outcome.status, "| events:", outcome.events.length, "| shots:", outcome.shots.length, "| clips:", outcome.clips.length, "| rrweb:", outcome.rrweb.length);
 
 	const transcript = await transcribeClips(outcome.clips, configFromEnv());

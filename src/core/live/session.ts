@@ -14,8 +14,12 @@ export interface Desc {
 	comps?: string[];
 	file?: string;
 	testid?: string;
-	/** Viewport CSS px: x, y, width, height. */
+	/** Viewport CSS px: x, y, width, height. For an area pin, the area itself. */
 	rect: [number, number, number, number];
+	/** Area pin: `rect` is the dragged area and the rest describes the smallest element holding it. */
+	area?: boolean;
+	inside?: { tag: string; text: string; comps?: string[]; file?: string }[];
+	areaText?: string;
 }
 
 export interface LiveEvent {
@@ -32,6 +36,7 @@ export interface LiveEvent {
 	value?: string;
 	id?: string;
 	pct?: number;
+	area?: boolean;
 }
 
 export interface Shot {
@@ -42,6 +47,8 @@ export interface Shot {
 	dpr: number;
 	ptr?: { x: number; y: number };
 	reason: string;
+	/** Id of the pin this screenshot was taken for. */
+	pin?: string;
 }
 
 export interface Point {
@@ -210,7 +217,7 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 	// ---------- screenshots ----------
 	let shotSeq = 0;
 	const shooting = new Set<Tab>();
-	async function shoot(tab: Tab | undefined, reason: string) {
+	async function shoot(tab: Tab | undefined, reason: string, pin?: string) {
 		if (!tab || tab.hidden || shooting.has(tab) || settled) return;
 		shooting.add(tab);
 		const t = sec(Date.now());
@@ -229,7 +236,7 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 				tab.lastHash = hash;
 				tab.lastFile = file;
 			}
-			shots.push({ t, tab: tab.n, file, url: tab.url, dpr: tab.dpr, ptr: tab.ptr && { ...tab.ptr }, reason });
+			shots.push({ t, tab: tab.n, file, url: tab.url, dpr: tab.dpr, ptr: tab.ptr && { ...tab.ptr }, reason, pin });
 		} catch {
 			// The tab went away or is not painting; the next tick will try again.
 		} finally {
@@ -354,7 +361,7 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 				if (e.x !== undefined && e.y !== undefined) tab.ptr = { x: e.x, y: e.y };
 				if (e.type === "pin") {
 					pins++;
-					shoot(tab, "pin");
+					shoot(tab, "pin", e.id);
 					broadcast();
 				} else if (rec && e.type === "click") setTimeout(() => shoot(tab, "click"), 350);
 				else if (rec && e.type === "nav") setTimeout(() => shoot(tab, "nav"), 900);

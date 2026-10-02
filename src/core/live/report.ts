@@ -71,7 +71,7 @@ export function compressLive(events: LiveEvent[], end: number): LiveEvent[] {
 				lastUrl.set(e.tab, e.url ?? "");
 				break;
 			case "pin":
-				out.push({ ...e, text: notes.get(e.id) });
+				out.push({ ...e, text: e.text ?? notes.get(e.id) });
 				return;
 			case "pin-note":
 			case "away":
@@ -89,11 +89,16 @@ const descKey = (d?: Desc) => (d ? `${d.tag}|${d.text}|${d.comps?.[0] ?? ""}` : 
 export function attributeLive(utterances: Utterance[], events: LiveEvent[]): LiveUtterance[] {
 	const focus = events.filter((e) => FOCUS_TYPES.has(e.type) && e.d);
 	const points = events.filter((e) => e.type === "point");
+	// A click that leaves the page (a navigation follows at once) is the reviewer moving on.
+	const leaving = new Set(
+		focus.filter((e) => e.type === "click" && events.some((n) => n.type === "nav" && n.tab === e.tab && n.t >= e.t && n.t - e.t < 1)),
+	);
 	return utterances.map((u) => {
 		let best: LiveEvent | undefined;
 		let bestScore = Number.POSITIVE_INFINITY;
 		for (const e of focus) {
 			if (e.t < u.start - ATTRIBUTE_BEFORE || e.t > u.end) continue;
+			if (e.t > u.start && leaving.has(e)) continue;
 			// People point, then talk; something touched mid-sentence is usually where they go next.
 			// A pin is a deliberate "this one", so it wins over nearby hovers.
 			const after = e.t > u.start;
@@ -110,9 +115,13 @@ export function attributeLive(utterances: Utterance[], events: LiveEvent[]): Liv
 	});
 }
 
+/** The screenshot taken when a pin was saved (it shows the pin's outline). */
+const pinShot = (shots: Shot[], p: LiveEvent) =>
+	shots.find((s) => s.pin !== undefined && s.pin === p.id) ?? shots.find((s) => s.reason === "pin" && Math.abs(s.t - p.t) < 1.5);
+
 function pickShot(shots: Shot[], u: LiveUtterance): Shot | undefined {
 	if (u.focus?.type === "pin") {
-		const pin = shots.find((s) => s.reason === "pin" && Math.abs(s.t - u.focus!.t) < 1.5);
+		const pin = pinShot(shots, u.focus);
 		if (pin) return pin;
 	}
 	// About a second into speaking: the screen they are talking about, not the one they just left.
@@ -144,11 +153,14 @@ export async function buildLiveReport(input: LiveReportInput): Promise<LiveRepor
 	const chosen = new Map<string, Attached>();
 	const want: { t: number; shot: Shot; caption: string; d?: Desc; at?: number }[] = [];
 	for (const p of pins) {
-		const shot = outcome.shots.find((s) => s.reason === "pin" && Math.abs(s.t - p.t) < 1.5);
-		if (shot) want.push({ t: p.t, shot, caption: `📌 ${where(p)}${p.text ? ` — "${p.text}"` : ""}`, d: p.d, at: p.t });
+		const shot = pinShot(outcome.shots, p);
+		// The pin's box is drawn even if the memo took a while to type.
+		if (shot) want.push({ t: p.t, shot, caption: `📌 ${where(p)}${p.text ? ` — "${p.text}"` : ""}`, d: p.d, at: shot.t });
 	}
 	for (const u of [...utterances].sort((a, b) => b.text.length - a.text.length)) {
-		if (u.shot) want.push({ t: u.start, shot: u.shot, caption: `🗣 "${u.text}"`, d: u.focus?.d, at: u.focus?.t });
+		if (!u.shot) continue;
+		const at = u.focus?.type === "pin" && u.shot.reason === "pin" ? u.shot.t : u.focus?.t;
+		want.push({ t: u.start, shot: u.shot, caption: `🗣 "${u.text}"`, d: u.focus?.d, at });
 	}
 	const shotDir = join(input.dir, "report-shots");
 	await mkdir(shotDir, { recursive: true });
@@ -187,9 +199,12 @@ export async function buildLiveReport(input: LiveReportInput): Promise<LiveRepor
 	if (pins.length) {
 		body.push("", "## 핀");
 		pins.forEach((p, i) => {
-			const shot = outcome.shots.find((s) => s.reason === "pin" && Math.abs(s.t - p.t) < 1.5);
-			const n = shotNo(shot);
+			const n = shotNo(pinShot(outcome.shots, p));
 			body.push(`📌${i + 1} [${stamp(p.t)}] ${[urlAt(p.tab, p.t), where(p)].filter(Boolean).join(" · ")}${p.text ? ` — 메모: "${p.text}"` : ""}${n ? `  🖼 #${n}` : ""}`);
+			if (p.d?.area) {
+				if (p.d.inside?.length) body.push(`   안: ${p.d.inside.map((x) => describeTarget({ ...x, rect: [0, 0, 0, 0] })).join(" · ")}`);
+				if (p.d.areaText) body.push(`   보이는 글자: "${p.d.areaText}"`);
+			}
 		});
 	}
 	if (input.points.length) {
@@ -231,6 +246,12 @@ export async function buildLiveReport(input: LiveReportInput): Promise<LiveRepor
 
 export function describeTarget(d?: Desc): string {
 	if (!d) return "";
+	if (d.area) {
+		// The common element's own text is usually the whole container; the area's text is in areaText.
+		const size = `영역 ${d.rect[2]}×${d.rect[3]}`;
+		if (!d.comps?.length && !d.file && /^(html|body|main)\b/.test(d.tag)) return size;
+		return `${size} 안 (${describeTarget({ ...d, area: false, text: "" })})`;
+	}
 	const comps = d.comps?.length ? `<${d.comps.slice(0, 3).join(" › ")}> ` : "";
 	const text = d.text ? ` "${d.text}"` : "";
 	const id = d.testid ? ` [testid=${d.testid}]` : "";
@@ -246,7 +267,7 @@ function describeEvent(e: LiveEvent, points: Point[], origin?: string): string |
 		case "click":
 			return `🖱 ${describeTarget(e.d)}`;
 		case "pin":
-			return `📌 ${describeTarget(e.d)}${e.text ? ` — 메모: "${e.text}"` : ""}`;
+			return `📌 ${describeTarget(e.d)}${e.d?.areaText ? ` "${e.d.areaText.slice(0, 80)}"` : ""}${e.text ? ` — 메모: "${e.text}"` : ""}`;
 		case "select":
 			return `✂ "${e.text}"${e.d?.comps ? ` (${e.d.comps[0]})` : ""}`;
 		case "input":

@@ -32,6 +32,22 @@ test("attributes speech to what was pointed at before it, not what was clicked m
 	assert.equal(u.focus?.d?.text, "불러오는 중");
 });
 
+test("a click that leaves the page mid-sentence is not what the sentence is about", () => {
+	const events: LiveEvent[] = [
+		{ t: 10, tab: 1, type: "click", d: d("청구서 보기") },
+		{ t: 14.4, tab: 1, type: "click", d: d("설정") },
+		{ t: 14.5, tab: 1, type: "nav", url: "http://x/settings" },
+	];
+	const [u] = attributeLive([{ start: 14, end: 16, text: "청구서 화면은 로딩이 길어요" }], events);
+	assert.equal(u.focus?.d?.text, "청구서 보기");
+});
+
+test("an area pin reads as its size and contents, not as <body>", () => {
+	const area: Desc = { tag: "body", text: "everything", rect: [0, 0, 210, 132], area: true, inside: [], areaText: "Compute" };
+	assert.equal(describeTarget(area), "영역 210×132");
+	assert.equal(describeTarget({ ...area, tag: "section", comps: ["Panel"] }), "영역 210×132 안 (<Panel> section)");
+});
+
 test("a pin beats a closer hover and the active review point is kept", () => {
 	const events: LiveEvent[] = [
 		{ t: 1, tab: 1, type: "point", id: "p2" },
