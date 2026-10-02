@@ -18,9 +18,10 @@ const HELP = `review-recorder — 화면을 보며 말로 하는 리뷰를 코�
   review-recorder doctor     필요한 도구 점검 (--mic: 마이크 2초 녹음 테스트)
   review-recorder setup      whisper.cpp 모델(약 1.6GB) 내려받기
 
-등록:
-  claude mcp add review-recorder -- review-recorder mcp
+등록 (npm link 안 했으면 review-recorder 대신 node <저장소>/dist/mcp/cli.js):
+  claude mcp add -s user review-recorder -- review-recorder mcp
   codex mcp add review-recorder -- review-recorder mcp
+  pi mcp add review-recorder --exposure direct -- review-recorder mcp
 
 데이터: ${DATA_DIR}`;
 

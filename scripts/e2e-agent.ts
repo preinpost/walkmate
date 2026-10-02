@@ -1,5 +1,5 @@
 // Runs a real coding agent against the MCP server and plays the reviewer.
-//   npm run build && node scripts/e2e-agent.ts claude    (or: codex)
+//   npm run build && node scripts/e2e-agent.ts claude    (or: codex, pi)
 // The agent opens a document review; this script submits an answer after 25s, longer than one
 // review_wait, so the agent has to keep calling it. Then it checks the agent saw the answer.
 import { spawn } from "node:child_process";
@@ -20,8 +20,12 @@ const prompt =
 	"review-recorder MCP 도구로 문서 리뷰를 열어줘. 제목은 '만료 정책', 섹션은 하나: id q1, kind question, title '토큰 만료 시간?', options ['15분', '1시간']. " +
 	"그다음 review_wait로 피드백이 올 때까지 기다려. 피드백을 받으면 사용자가 고른 답과 코멘트를 한 줄로만 알려줘. 다른 작업은 하지 마.";
 
+// pi uses the server registered in ~/.pi/agent/mcp.json, which inherits this process's environment:
+//   pi mcp add review-recorder --exposure direct -- node <repo>/dist/mcp/cli.js mcp
 const [cmd, args] =
-	agent === "codex"
+	agent === "pi"
+		? ["pi", ["--print", "--no-session", prompt]]
+		: agent === "codex"
 		? [
 				"codex",
 				[
@@ -45,7 +49,7 @@ const [cmd, args] =
 			];
 
 const started = Date.now();
-const child = spawn(cmd, args as string[], { cwd: work, stdio: ["ignore", "pipe", "pipe"] });
+const child = spawn(cmd, args as string[], { cwd: work, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...serverEnv } });
 let out = "";
 child.stdout.on("data", (d) => (out += d));
 child.stderr.on("data", (d) => (out += d));
