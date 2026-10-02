@@ -93,8 +93,8 @@ claude mcp add -s user walkmate -- node $REPO/dist/mcp/cli.js mcp
 # Codex
 codex mcp add walkmate -- node $REPO/dist/mcp/cli.js mcp
 
-# pi: 기본 노출(codemode)이 아니라 direct 로 등록해야 모델이 도구를 바로 본다
-pi mcp add walkmate --exposure direct -- node $REPO/dist/mcp/cli.js mcp
+# pi (기본 codemode 노출)
+pi mcp add walkmate -- node $REPO/dist/mcp/cli.js mcp
 ```
 
 확인은 Claude Code·pi에서 `/mcp`, 셸에서 `codex mcp list` / `pi mcp list`.

@@ -97,8 +97,8 @@ claude mcp add -s user walkmate -- node $REPO/dist/mcp/cli.js mcp
 # Codex
 codex mcp add walkmate -- node $REPO/dist/mcp/cli.js mcp
 
-# pi: register with direct exposure (not the default codemode) so the model sees the tools directly
-pi mcp add walkmate --exposure direct -- node $REPO/dist/mcp/cli.js mcp
+# pi (default codemode exposure)
+pi mcp add walkmate -- node $REPO/dist/mcp/cli.js mcp
 ```
 
 To confirm, use `/mcp` in Claude Code or pi, or `codex mcp list` / `pi mcp list` in a shell.
