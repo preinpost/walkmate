@@ -10,6 +10,7 @@ import { CHROME_PROFILE, DATA_DIR, WHISPER_MODEL_URL } from "../core/config.ts";
 import { findExecutable, ffmpegInstallHint, whisperInstallHint } from "../core/dependencies.ts";
 import { CHROME_BIN } from "../core/live/cdp.ts";
 import { ffmpegRecorder } from "../core/live/mic.ts";
+import { exportPlaywright } from "../core/live/export-playwright.ts";
 import { writePlaybook } from "../core/live/playbook.ts";
 import { configFromEnv } from "../core/transcribe.ts";
 import { createReviewServer } from "./server.ts";
@@ -24,6 +25,8 @@ const HELP = `walkmate — 시연 기록과 피드백을 코딩 에이전트에�
   walkmate setup      whisper.cpp 모델(약 1.6GB) 내려받기
   walkmate playbook <리뷰 폴더> [--from 초] [--to 초] [--title 제목] [--out 폴더]
                              시연을 playbook.json / playbook.md 초안으로 변환 (자동 실행 없음)
+  walkmate playwright [리뷰 폴더] [--out 파일] [--title 제목] [--from 초] [--to 초] [--walkmate | --no-walkmate] [--overwrite]
+                             시연을 Playwright 테스트(.spec.ts)로 내보내기 (폴더를 빼면 가장 최근 녹화)
 
 등록 (npm link 안 했으면 walkmate 대신 node <저장소>/dist/mcp/cli.js):
   claude mcp add -s user walkmate -- walkmate mcp
@@ -56,6 +59,32 @@ switch (cmd) {
 				title: values.title, out: values.out,
 			});
 			console.log(`플레이북 초안 ${result.playbook.steps.length}단계\n${result.json}\n${result.markdown}\n실행 전에 단계와 완료 조건을 검토하세요.`);
+		} catch (err) {
+			console.error(err instanceof Error ? err.message : String(err));
+			process.exitCode = 2;
+		}
+		break;
+	case "playwright":
+		try {
+			const { values, positionals } = parseArgs({ args, allowPositionals: true, options: {
+				out: { type: "string" }, title: { type: "string" }, from: { type: "string" }, to: { type: "string" },
+				walkmate: { type: "boolean" }, "no-walkmate": { type: "boolean" }, overwrite: { type: "boolean" },
+			} });
+			if (positionals.length > 1) throw new Error("playwright에는 리뷰 폴더를 하나만 지정하세요.");
+			const seconds = (v?: string) => {
+				if (v === undefined) return undefined;
+				const n = Number(v);
+				if (!Number.isFinite(n) || n < 0) throw new Error(`시간은 0 이상의 초여야 합니다: ${v}`);
+				return n;
+			};
+			const result = await exportPlaywright(positionals[0], {
+				cwd: process.cwd(), out: values.out, title: values.title, from: seconds(values.from), to: seconds(values.to),
+				withWalkmate: values["no-walkmate"] ? false : values.walkmate, overwrite: values.overwrite,
+			});
+			console.log(`Playwright 테스트 ${result.steps}단계: ${result.path}`);
+			for (const w of result.warnings) console.log(`△ ${w}`);
+			for (const t of result.todos) console.log(`TODO ${t}`);
+			console.log(`실행: npx playwright test ${result.path}`);
 		} catch (err) {
 			console.error(err instanceof Error ? err.message : String(err));
 			process.exitCode = 2;

@@ -136,6 +136,8 @@ If you omit the URL in `live_review`, it starts with a blank Chrome tab.
 A dedicated review Chrome window opens (profile `~/.walkmate/chrome-profile`; you log in only the first time).
 If you need to demonstrate from the login step (e.g. when turning the demonstration into a Playwright test), open it with `isolated: true`.
 It starts from a logged-out temporary profile and deletes that profile when the review ends. The shared profile's login state is left untouched.
+To keep a test account's ID and password as typed, also pass `record_inputs: true` ("record the password too").
+Typed values are then stored unmasked in `events.json`, the report, the playbook and the rrweb replay; network bodies stay redacted. Do not use it with real accounts.
 Toolbar in the bottom-right corner:
 
 | | |
@@ -255,6 +257,50 @@ classify what a button means for the business, and does not replace separate app
 The first version operates on the top-level document's DOM. Searching inside iframes or shadow DOM, file upload, drag, and running arbitrary JavaScript are not supported.
 **This is a feature for the agent to choose steps or pass a fixed batch of steps to run**; there is no unattended `workflow.json` execution or automatic comparison between demonstration and run yet.
 
+## Exporting a demonstration as a Playwright test
+
+After you demonstrate something, say "turn this demonstration into a Playwright test" and the agent exports the recording
+to a `.spec.ts` file with `export_to_playwright`. It reads the saved recording only; no browser opens.
+
+1. **Open with isolated and demonstrate.** To show the login too, use `isolated: true`; to reuse the test account's ID and password as typed,
+   also pass `record_inputs: true` ("I'll show you from login, record the password too").
+2. **Submit.** The agent receives the demonstration (actions, voice, pins, screenshots) through `review_wait`.
+3. **Export.** The agent calls `export_to_playwright({ recording, cwd })`, which writes the file into the project's test folder and returns the code.
+   Then it runs `npx playwright test <file>`, fixes the TODO lines and adds expect checks for the goal of the demonstration.
+
+While recording, the page stores **locator candidates for each element together with how many elements matched at that moment**,
+so the export can pick a unique one.
+
+| Demonstration | Generated code |
+|---|---|
+| Start URL, navigation typed into the address bar | `page.goto(url)` |
+| Click | Locator chosen in this order: unique testid → role+name → role+name inside a container with a unique testid → label → placeholder → id → name attribute, then `.click()` |
+| Typing, select, checkbox/radio | `.fill(value)`, `.selectOption(value)`, `.check()` / `.uncheck()` |
+| Enter in a text field, Escape | `.press("Enter")`, `page.keyboard.press("Escape")` |
+| Address change right after an action (within 5s) | `expect(page).toHaveURL(url)` at the end of that step |
+| New window (popup) | `page.waitForEvent("popup")` and a `page2` variable |
+| Element pin | `expect(locator).toBeVisible()` with the pin memo as a comment |
+| Voice | Comment above the matching step |
+
+- Each action is wrapped in `test.step("3. 입력: 이메일", ...)`. If the project has the `walkmate` package, the test is wrapped with `withWalkmate`,
+  so every run leaves `.walkmate/runs/<run folder>/replay.html` (set `with_walkmate` to choose explicitly).
+- Events that duplicate another step are dropped: the click that focuses a field, the click on a checkbox label, and the default-button click
+  the browser makes when Enter submits a form. Hovers and scrolls are left out (Playwright scrolls to the target).
+- With `record_inputs: true`, typed values including passwords go into the code **as literals**, with a warning comment at the top of the file.
+  Masked values are read from required environment variables such as `env("WALKMATE_PASSWORD")`.
+- When an element was picked by its recorded position among same-named elements (`.nth(i)`), or can only be found by its text, a `// TODO:` goes above that line.
+  Without a pin, a final TODO asks for a completion check. A URL check alone does not show the demonstration succeeded.
+- The default location is `<title>.spec.ts` under `testDir` from `playwright.config`, otherwise `e2e/` or `tests/`. An existing file is not overwritten
+  unless `overwrite: true`. `from`/`to` (seconds) export part of the recording.
+- File uploads stay as a commented-out `setInputFiles` with a TODO, since the path is unknown. Drag and contenteditable typing are not converted yet.
+  Older recordings without locator candidates fall back to visible text with a TODO.
+
+The CLI does the same. Without a folder it uses the newest recording in the current project.
+
+```bash
+walkmate playwright [.walkmate/reviews/mcp/<recording folder>] [--out e2e/login.spec.ts] [--title title] [--from sec] [--to sec] [--overwrite]
+```
+
 ## Turning a demonstration into a playbook (prototype)
 
 To hand a human demonstration to an agent, convert a submitted **live review folder** into a draft playbook.
@@ -321,6 +367,7 @@ Reviews take several minutes and MCP clients put timeouts on tool calls, so wait
 | `review_start` | Called with no arguments, starts a live demonstration in a blank Chrome tab. With `url`, a live review on that site; with non-empty `sections` and no URL, a document review. `title` defaults to `Walkmate`. Returns the review id |
 | `review_wait` | Waits up to 45 seconds (`WALKMATE_WAIT_SEC`). Returns feedback (text + screenshots) if finished, otherwise "call again" |
 | `review_cancel` | Closes the open review |
+| `export_to_playwright` | Exports a live demonstration recording as a Playwright test file. Returns the path, code and TODOs. Does not open a browser |
 
 `review_wait` returns before the client's tool timeout (Codex `tool_timeout_sec`, Claude Code `MCP_TOOL_TIMEOUT`, pi `timeout`, 60 seconds by default),
 so you don't need to change any settings. It also sends progress notifications.
@@ -471,10 +518,11 @@ src/mcp/    stdio MCP server and CLI (built to dist/)
 | `core/live/report.ts` | Event compaction, linking utterances to targets, screenshot selection and marking, report |
 | `core/live/replay.ts` | rrweb + voice synchronized replay page, rewriting addresses to the saved images and fonts |
 | `core/live/playbook.ts` | Builds pre-run JSON and Markdown draft playbooks from a saved live review |
+| `core/live/export-playwright.ts` | Converts a saved live review into a Playwright `.spec.ts`: locator choice, duplicate event cleanup, popups and URL checks |
 | `core/page/live.js` | App page: toolbar, tracking pointer, clicks, selection, input, scroll, and navigation, finding React components and sources, pins |
 | `core/transcribe.ts` | whisper.cpp / OpenAI, word-level timestamps, excluding silent clips |
-| `mcp/server.ts` | MCP tools `review_start` / `review_wait` / `review_cancel`, prompts |
-| `mcp/cli.ts` | CLI: `mcp` (server), `doctor` (checks), `setup` (download model), `playbook` (convert a demonstration) |
+| `mcp/server.ts` | MCP tools `review_start` / `review_wait` / `review_cancel` / `export_to_playwright`, prompts |
+| `mcp/cli.ts` | CLI: `mcp` (server), `doctor` (checks), `setup` (download model), `playbook` (convert a demonstration), `playwright` (export a test) |
 
 ## Development
 

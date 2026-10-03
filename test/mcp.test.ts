@@ -27,7 +27,7 @@ const textOf = (r: CallToolResult) => r.content.filter((c) => c.type === "text")
 test("start, wait while open, submit, get the feedback", async () => {
 	const { client, shutdown, cwd } = await connect();
 	const tools = await client.listTools();
-	assert.deepEqual(tools.tools.map((t) => t.name), ["review_start", "review_wait", "review_cancel", "run_start", "run_step", "run_finish"]);
+	assert.deepEqual(tools.tools.map((t) => t.name), ["review_start", "review_wait", "review_cancel", "export_to_playwright", "run_start", "run_step", "run_finish"]);
 	assert.ok(client.getInstructions()?.includes("review_wait"));
 
 	const started = await client.callTool({
@@ -133,6 +133,8 @@ test("instructions and tool description distinguish Walkmate usage requests from
 		assert.match(instructions, /If tools are deferred, search for the Walkmate review_start MCP tool first/);
 		assert.match(instructions, /Do not save walkthrough-derived notes or skills in global agent memory/);
 		assert.match(instructions, /Never copy plaintext passwords/);
+		assert.match(instructions, /record_inputs=true \(only when the user explicitly asked/);
+		assert.match(instructions, /Playwright test, call export_to_playwright/);
 		assert.match(instructions, /\.walkmate\/skills\/<name>\/SKILL\.md/);
 
 		const { tools } = await client.listTools();
@@ -172,6 +174,7 @@ test("bare launch starts a blank live browser while explicit targets retain thei
 			{ args: { sections: [{ id: "n1", kind: "note", title: "변경 사항" }] }, expected: { title: "Walkmate", sections: [{ id: "n1", kind: "note", title: "변경 사항" }] } },
 			{ args: { url: "http://app/", isolated: false, sections: [{ id: "n1", kind: "note", title: "확인할 부분" }] }, expected: { title: "Walkmate", url: "http://app/", isolated: false, sections: [{ id: "n1", kind: "note", title: "확인할 부분" }] } },
 			{ args: { url: "localhost:5173/login", isolated: true }, expected: { title: "Walkmate", url: "localhost:5173/login", isolated: true } },
+			{ args: { isolated: true, record_inputs: true }, expected: { title: "Walkmate", url: "about:blank", isolated: true, record_inputs: true } },
 		];
 		for (const { args, expected } of cases) {
 			const started = await client.callTool({ name: "review_start", arguments: args });

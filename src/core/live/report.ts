@@ -369,6 +369,8 @@ function describeEvent(e: LiveEvent, points: Point[], origin?: string): string |
 			return `✂ "${e.text}"${e.d?.comps ? ` (${e.d.comps[0]})` : ""}`;
 		case "input":
 			return `⌨ ${describeTarget(e.d)} = "${e.value}"`;
+		case "key":
+			return `⏎ ${e.key}${e.d ? ` · ${describeTarget(e.d)}` : ""}`;
 		case "scroll":
 			return `↕ ${e.pct}%${e.d ? ` · 화면 중앙: ${describeTarget(e.d)}` : ""}`;
 		case "point":

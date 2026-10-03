@@ -79,6 +79,7 @@ export async function runLiveReview(req: ReviewRequest & { url: string }, renv: 
 			dir,
 			recorder: ffmpegRecorder,
 			userDataDir: profile,
+			recordInputs: req.record_inputs,
 			signal: ac.signal,
 			timeoutMs: timeoutMs(),
 			onReady: () => renv.onWaiting?.({ url, title: req.title, live: true, dir }),

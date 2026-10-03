@@ -22,6 +22,34 @@ export interface Desc {
 	area?: boolean;
 	inside?: { tag: string; text: string; comps?: string[]; file?: string }[];
 	areaText?: string;
+	/** Clicks, inputs, keys and pins: locator candidates for the element itself, with match counts at that moment. */
+	loc?: LocatorHints;
+}
+
+/** Counts are visible matches on the page when the event happened; index is the element's position among them. */
+export interface LocatorHints {
+	tag: string;
+	type?: string;
+	testid?: string;
+	testidCount?: number;
+	role?: string;
+	name?: string;
+	roleCount?: number;
+	roleIndex?: number;
+	/** Nearest ancestor with a page-unique testid, when role+name is not unique on the page. */
+	scope?: string;
+	scopeCount?: number;
+	scopeIndex?: number;
+	label?: string;
+	labelCount?: number;
+	placeholder?: string;
+	placeholderCount?: number;
+	/** The name attribute of a form control. */
+	field?: string;
+	fieldCount?: number;
+	id?: string;
+	idCount?: number;
+	text?: string;
 }
 
 export interface LiveEvent {
@@ -39,6 +67,8 @@ export interface LiveEvent {
 	id?: string;
 	pct?: number;
 	area?: boolean;
+	/** type "key": Enter in a text field or Escape. */
+	key?: string;
 }
 
 export interface Shot {
@@ -110,6 +140,8 @@ export interface LiveOptions {
 	shotEveryMs?: number;
 	/** Agent executions record screenshots and mask inputs independently of microphone state. */
 	agent?: boolean;
+	/** Record typed values, passwords included, unmasked. Ignored for agent executions. */
+	recordInputs?: boolean;
 	/** Called once the page is open; control is for the internal runtime, port is for CDP tests. */
 	onReady?: (info: { port: number; targetId: string; control: LiveControl }) => void;
 }
@@ -130,10 +162,10 @@ interface Tab {
 
 const BINDING = "__piReview";
 
-function pageScript(agent = false): string {
+function pageScript(agent = false, recordInputs = false): string {
 	const rrweb = distFile("@rrweb/record", "record.umd.min.cjs");
 	const live = readFileSync(new URL("../page/live.js", import.meta.url), "utf8");
-	const cfg = JSON.stringify({ canvasFps: Number(env("CANVAS_FPS") ?? 1), maskAllInputs: agent });
+	const cfg = JSON.stringify({ canvasFps: Number(env("CANVAS_FPS") ?? 1), maskAllInputs: agent, recordInputs: !agent && recordInputs });
 	// Load the UMD bundle as a CommonJS module so it does not touch the app's globals.
 	return `window.__piReviewCfg=${cfg};(function(){if(window.top!==window||window.__piRrweb||location.href==="about:blank")return;var module={exports:{}};var exports=module.exports;\n${rrweb}\n;window.__piRrweb=module.exports;})();\n${live}`;
 }
@@ -145,7 +177,7 @@ export async function runLiveSession(opts: LiveOptions): Promise<LiveOutcome> {
 	const shotsDir = join(opts.dir, "shots");
 	await mkdir(shotsDir, { recursive: true });
 
-	const script = pageScript(opts.agent);
+	const script = pageScript(opts.agent, opts.recordInputs);
 	const browser: Browser = await launchChrome({ userDataDir: opts.userDataDir, headless: opts.headless, args: opts.chromeArgs, signal: opts.signal });
 	const { cdp } = browser;
 

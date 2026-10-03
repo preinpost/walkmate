@@ -133,6 +133,8 @@ Claude Code에서는 MCP 프롬프트로도 시작할 수 있다: `/walkmate:liv
 리뷰 전용 Chrome 창이 열린다(프로필 `~/.walkmate/chrome-profile`, 로그인은 처음 한 번).
 로그인부터 시연해야 하면(예: 시연을 Playwright 테스트로 옮길 때) `isolated: true`로 연다.
 로그아웃된 임시 프로필에서 시작하고, 리뷰가 끝나면 프로필을 지운다. 공유 프로필의 로그인 상태는 그대로 둔다.
+테스트 계정의 아이디·비밀번호까지 그대로 남기려면 `record_inputs: true`를 함께 준다("비번도 기록해서 열어줘").
+입력값을 가리지 않고 `events.json`·보고서·플레이북·rrweb 재생에 남기며, 네트워크 본문은 계속 가린다. 실제 계정에는 쓰지 않는다.
 오른쪽 아래 툴바:
 
 | | |
@@ -252,6 +254,49 @@ E2E skill처럼 순서가 정해져 있고 대상이 testid·css·role로 고정
 첫 버전은 상위 문서의 DOM을 조작한다. iframe·shadow DOM 내부 탐색, 파일 업로드·드래그, 임의 JavaScript 실행은 지원하지 않는다.
 **에이전트가 단계를 고르거나 정해진 단계 묶음을 넘겨 실행하는 기능**이며, `workflow.json` 무인 실행이나 시연/실행 자동 비교 기능은 아직 없다.
 
+## 시연을 Playwright 테스트로 내보내기
+
+시연을 보여 준 뒤 "이 시연을 Playwright 테스트로 만들어 줘"라고 하면, 에이전트가 `export_to_playwright`로
+녹화를 `.spec.ts` 파일로 내보낸다. 브라우저를 다시 열지 않고 저장된 녹화만 읽는다.
+
+1. **isolated로 열고 시연한다.** 로그인부터 보여 주려면 `isolated: true`, 테스트 계정의 아이디·비밀번호까지 그대로 쓰려면
+   `record_inputs: true`를 함께 준다("로그인부터 보여줄게, 비번도 기록해서 열어줘").
+2. **제출한다.** 에이전트가 `review_wait`로 시연 내용(행동·음성·핀·스크린샷)을 받는다.
+3. **내보낸다.** 에이전트가 `export_to_playwright({ recording, cwd })`를 호출하면 프로젝트의 테스트 폴더에 파일을 쓰고 코드를 돌려받는다.
+   이어서 `npx playwright test <파일>`로 실행해 보고, TODO 줄을 고치고 시연 목적을 확인하는 expect를 보탠다.
+
+녹화할 때 페이지에서 요소마다 **locator 후보와 그 순간의 일치 개수**를 함께 기록하므로, 내보낼 때 유일한 후보를 고를 수 있다.
+
+| 시연 | 생성되는 코드 |
+|---|---|
+| 시작 주소, 주소창에 입력한 이동 | `page.goto(url)` |
+| 클릭 | 유일한 testid → 역할+이름 → 고유 testid 컨테이너 안의 역할+이름 → label → placeholder → id → name 속성 순으로 locator를 골라 `.click()` |
+| 글자 입력, select, 체크박스·라디오 | `.fill(값)`, `.selectOption(값)`, `.check()` / `.uncheck()` |
+| 입력 칸에서 Enter, Escape | `.press("Enter")`, `page.keyboard.press("Escape")` |
+| 행동 직후(5초 안) 주소 변화 | 그 단계 끝에 `expect(page).toHaveURL(url)` |
+| 새 창(popup) | `page.waitForEvent("popup")`과 `page2` 변수 |
+| 요소 핀 | `expect(locator).toBeVisible()`과 핀 메모 주석 |
+| 음성 | 해당 단계 위에 주석 |
+
+- 행동마다 `test.step("3. 입력: 이메일", ...)`으로 감싼다. 프로젝트에 `walkmate` 패키지가 있으면 `withWalkmate`로 감싸서
+  테스트를 실행할 때마다 `.walkmate/runs/<실행 폴더>/replay.html`이 남는다(`with_walkmate`로 직접 지정 가능).
+- 입력 칸을 누른 클릭, 체크박스 label 클릭, Enter로 제출할 때 브라우저가 기본 버튼을 누르는 클릭처럼 다른 단계와 겹치는 이벤트는 뺀다.
+  호버·스크롤은 넣지 않는다(Playwright가 대상까지 스크롤한다).
+- `record_inputs: true`로 녹화했으면 비밀번호를 포함한 입력값이 **코드에 그대로** 들어가고, 파일 맨 위에 경고 주석이 붙는다.
+  가려진 값은 `env("WALKMATE_PASSWORD")`처럼 반드시 설정해야 하는 환경 변수로 읽는다.
+- 같은 이름의 요소가 여러 개라 녹화 당시 순서(`.nth(i)`)로 골랐거나 글자로만 찾을 수 있으면 해당 줄 위에 `// TODO:`를 단다.
+  핀이 없으면 마지막에 완료 조건을 추가하라는 TODO를 단다. 주소 확인만으로는 시연이 성공했다고 볼 수 없다.
+- 저장 위치 기본값은 `playwright.config`의 `testDir`, 없으면 `e2e/` 또는 `tests/` 아래 `<제목>.spec.ts`다. 이미 있는 파일은
+  `overwrite: true`가 없으면 덮어쓰지 않는다. `from`·`to`(초)로 녹화 일부만 내보낼 수 있다.
+- 파일 업로드는 경로를 알 수 없어 주석 처리된 `setInputFiles`와 TODO로 남긴다. 드래그와 contenteditable 입력은 아직 옮기지 않는다.
+  locator 후보가 없는 예전 녹화는 보이는 글자로 찾고 TODO를 단다.
+
+CLI로도 내보낼 수 있다. 폴더를 빼면 현재 프로젝트에서 가장 최근 녹화를 쓴다.
+
+```bash
+walkmate playwright [.walkmate/reviews/mcp/<녹화 폴더>] [--out e2e/login.spec.ts] [--title 제목] [--from 초] [--to 초] [--overwrite]
+```
+
 ## 시연을 플레이북으로 변환 (시제품)
 
 사람이 보여 준 절차를 에이전트에게 전달하려면, 제출한 **라이브 리뷰 폴더**를 플레이북 초안으로 변환한다.
@@ -318,6 +363,7 @@ node dist/mcp/cli.js playbook "$REVIEW" --from 42 --to 50 --title "시연한 작
 | `review_start` | 인자 없이 호출하면 빈 Chrome 탭에서 라이브 시연을 시작한다. `url`이 있으면 해당 사이트에서 라이브 리뷰, URL 없이 비어 있지 않은 `sections`를 전달하면 문서 리뷰. `title` 기본값은 `Walkmate`. 리뷰 id를 반환 |
 | `review_wait` | 최대 45초(`WALKMATE_WAIT_SEC`) 기다린다. 끝났으면 피드백(텍스트+스크린샷), 아니면 "다시 호출" |
 | `review_cancel` | 열린 리뷰를 닫는다 |
+| `export_to_playwright` | 라이브 시연 녹화를 Playwright 테스트 파일로 내보낸다. 경로·코드·TODO를 반환. 브라우저는 열지 않는다 |
 
 `review_wait`는 클라이언트의 도구 타임아웃(Codex `tool_timeout_sec`, Claude Code `MCP_TOOL_TIMEOUT`, pi `timeout` 기본 60초)보다
 짧게 기다리고 돌아오므로 설정을 바꿀 필요가 없다. 진행 알림(progress)도 보낸다.
@@ -466,10 +512,11 @@ src/mcp/    stdio MCP 서버와 CLI (dist/로 빌드)
 | `core/live/report.ts` | 이벤트 압축, 발화 ↔ 대상 연결, 스크린샷 선택·표시, 보고서 |
 | `core/live/replay.ts` | rrweb + 음성 동기 재생 페이지, 저장한 이미지·폰트로 주소 바꾸기 |
 | `core/live/playbook.ts` | 저장된 라이브 리뷰에서 실행 전 검토용 JSON·Markdown 플레이북 초안 생성 |
+| `core/live/export-playwright.ts` | 저장된 라이브 리뷰를 Playwright `.spec.ts`로 변환: locator 선택, 겹치는 이벤트 정리, 팝업·주소 확인 |
 | `core/page/live.js` | 앱 페이지: 툴바, 포인터·클릭·선택·입력·스크롤·이동 추적, React 컴포넌트·소스 찾기, 핀 |
 | `core/transcribe.ts` | whisper.cpp / OpenAI, 단어 단위 타임스탬프, 무음 클립 제외 |
-| `mcp/server.ts` | MCP 도구 `review_start` / `review_wait` / `review_cancel`, 프롬프트 |
-| `mcp/cli.ts` | CLI: `mcp`(서버), `doctor`(점검), `setup`(모델 받기), `playbook`(시연 변환) |
+| `mcp/server.ts` | MCP 도구 `review_start` / `review_wait` / `review_cancel` / `export_to_playwright`, 프롬프트 |
+| `mcp/cli.ts` | CLI: `mcp`(서버), `doctor`(점검), `setup`(모델 받기), `playbook`(시연 변환), `playwright`(테스트 내보내기) |
 
 ## 개발
 

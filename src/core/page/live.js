@@ -117,7 +117,103 @@
   // A PDF or image tab is not an HTML page: its elements mean nothing, the document does.
   const plainDoc = !/html|xml/.test(document.contentType);
   const docName = () => `${document.contentType === "application/pdf" ? "PDF 문서" : document.contentType} ${decodeURIComponent(location.pathname.split("/").pop() || "")}`.trim();
-  const describe = (raw) => {
+  // ---------- Locator hints: how a Playwright test can find the element again ----------
+  // An approximation of Playwright's role and accessible-name rules, with match counts taken on
+  // the page at the moment of the action so the exporter knows which candidates are unique.
+
+  const INPUT_ROLE = { button: "button", submit: "button", reset: "button", image: "button", checkbox: "checkbox", radio: "radio",
+    range: "slider", number: "spinbutton", search: "searchbox", email: "textbox", tel: "textbox", text: "textbox", url: "textbox" };
+  const TAG_ROLE = { BUTTON: "button", TEXTAREA: "textbox", OPTION: "option", H1: "heading", H2: "heading", H3: "heading", H4: "heading", H5: "heading", H6: "heading" };
+  const NAME_FROM_CONTENT = new Set(["button", "link", "checkbox", "radio", "switch", "heading", "option", "tab", "menuitem",
+    "menuitemcheckbox", "menuitemradio", "treeitem", "cell", "gridcell", "columnheader", "rowheader", "tooltip"]);
+  const ROLE_CANDIDATES = "a,area,button,input,select,textarea,img,option,h1,h2,h3,h4,h5,h6,[role]";
+  const FORM_CONTROL = "input,select,textarea";
+  const MAX_SCAN = 5000;
+  // The toolbar's stylesheet below is also called CSS.
+  const cssEscape = (s) => window.CSS.escape(s);
+
+  const roleOf = (el) => {
+    const explicit = el.getAttribute("role")?.trim().split(/\s+/)[0];
+    if (explicit) return explicit;
+    const tag = el.tagName;
+    if (tag === "INPUT") return el.hasAttribute("list") && INPUT_ROLE[el.type] === "textbox" ? "combobox" : INPUT_ROLE[el.type];
+    if (tag === "A" || tag === "AREA") return el.hasAttribute("href") ? "link" : undefined;
+    if (tag === "SELECT") return el.multiple || el.size > 1 ? "listbox" : "combobox";
+    if (tag === "IMG") return el.getAttribute("alt") === "" ? undefined : "img";
+    return TAG_ROLE[tag];
+  };
+  // Label text without the controls nested in it.
+  const labelText = (label) => {
+    const copy = label.cloneNode(true);
+    copy.querySelectorAll("input,select,textarea,button").forEach((n) => n.remove());
+    return clean(copy.textContent);
+  };
+  const byIds = (ids) => clean(ids.split(/\s+/).map((id) => document.getElementById(id)?.innerText ?? "").join(" "));
+  const labelOf = (el) => {
+    const by = el.getAttribute("aria-labelledby");
+    if (by) return byIds(by) || undefined;
+    const aria = clean(el.getAttribute("aria-label"));
+    if (aria) return aria;
+    return clean([...(el.labels ?? [])].map(labelText).join(" ")) || undefined;
+  };
+  const nameOf = (el, role) => {
+    const by = el.getAttribute("aria-labelledby");
+    if (by && byIds(by)) return byIds(by);
+    const aria = clean(el.getAttribute("aria-label"));
+    if (aria) return aria;
+    if (el.matches(FORM_CONTROL)) {
+      if (el.tagName === "INPUT" && /^(button|submit|reset)$/.test(el.type)) return clean(el.value) || (el.type === "submit" ? "Submit" : el.type === "reset" ? "Reset" : "");
+      if (el.tagName === "INPUT" && el.type === "image") return clean(el.alt) || clean(el.title);
+      return labelOf(el) || clean(el.title) || clean(el.placeholder);
+    }
+    if (el.tagName === "IMG") return clean(el.getAttribute("alt")) || clean(el.title);
+    if (NAME_FROM_CONTENT.has(role)) return clean(el.innerText ?? el.textContent) || clean(el.title);
+    return clean(el.title);
+  };
+  const shown = (el) => !el.closest("[data-pi-review],[aria-hidden=true]") && (el.checkVisibility ? el.checkVisibility() : el.getClientRects().length > 0);
+  // Count of matches and the target's position among them; undefined when the page is too large to scan.
+  const tally = (root, selector, same, target) => {
+    const all = root.querySelectorAll(selector);
+    if (all.length > MAX_SCAN) return {};
+    const hits = [...all].filter((el) => shown(el) && same(el));
+    return { count: hits.length, index: Math.max(0, hits.indexOf(target)) };
+  };
+  const testidCount = (id) => document.querySelectorAll(`[data-testid="${cssEscape(id)}"]`).length;
+
+  const locate = (el) => {
+    const loc = { tag: el.tagName.toLowerCase() };
+    if (el.tagName === "INPUT") loc.type = el.type;
+    const testid = el.getAttribute("data-testid");
+    if (testid) Object.assign(loc, { testid, testidCount: testidCount(testid) });
+    const role = roleOf(el);
+    if (role) {
+      const name = nameOf(el, role);
+      const same = (o) => roleOf(o) === role && (!name || nameOf(o, role) === name);
+      const { count, index } = tally(document, ROLE_CANDIDATES, same, el);
+      Object.assign(loc, { role, name: name || undefined, roleCount: count, roleIndex: index });
+      // Duplicates such as a delete button per row: try the nearest container with a unique testid.
+      const scope = el.parentElement?.closest("[data-testid]");
+      const scopeId = scope?.getAttribute("data-testid");
+      if (count > 1 && scopeId && testidCount(scopeId) === 1) {
+        const inner = tally(scope, ROLE_CANDIDATES, same, el);
+        Object.assign(loc, { scope: scopeId, scopeCount: inner.count, scopeIndex: inner.index });
+      }
+    }
+    if (el.matches(FORM_CONTROL)) {
+      const label = labelOf(el);
+      if (label) Object.assign(loc, { label, labelCount: tally(document, FORM_CONTROL, (o) => labelOf(o) === label, el).count });
+      const placeholder = clean(el.getAttribute("placeholder"));
+      if (placeholder) Object.assign(loc, { placeholder, placeholderCount: tally(document, FORM_CONTROL, (o) => clean(o.getAttribute("placeholder")) === placeholder, el).count });
+      const field = el.getAttribute("name");
+      if (field) Object.assign(loc, { field, fieldCount: document.querySelectorAll(`${loc.tag}[name="${cssEscape(field)}"]`).length });
+    }
+    if (el.id) Object.assign(loc, { id: el.id, idCount: document.querySelectorAll(`#${cssEscape(el.id)}`).length });
+    const text = clean(el.innerText ?? el.textContent);
+    if (text && text.length <= 80 && !el.matches(FORM_CONTROL)) loc.text = text;
+    return loc;
+  };
+
+  const describe = (raw, withLoc = false) => {
     let el = raw instanceof Element ? raw : raw?.parentElement;
     if (!el || el === host) return;
     if (plainDoc) return { tag: "document", text: docName(), rect: [0, 0, innerWidth, innerHeight] };
@@ -127,6 +223,8 @@
     if (r0.width * r0.height > innerWidth * innerHeight * 0.4) target = el;
     const r = target.getBoundingClientRect();
     const { comps, file } = react(target);
+    let loc;
+    try { loc = withLoc && target !== document.body && target !== document.documentElement ? locate(target) : undefined; } catch {}
     return {
       tag: tagOf(target),
       text: textOf(target),
@@ -134,6 +232,7 @@
       file,
       testid: target.closest("[data-testid]")?.getAttribute("data-testid") || undefined,
       rect: [r.x, r.y, r.width, r.height].map(Math.round),
+      loc,
     };
   };
   const keyOf = (d) => (d ? `${d.tag}|${d.text}|${d.comps?.[0] ?? ""}` : "");
@@ -161,15 +260,27 @@
 
   addEventListener("click", (e) => {
     if (ours(e) || pinMode || drag || swallowClick) return;
-    ev("click", { x: Math.round(e.clientX), y: Math.round(e.clientY), d: describe(e.target) });
+    ev("click", { x: Math.round(e.clientX), y: Math.round(e.clientY), d: describe(e.target, true) });
   }, true);
 
   addEventListener("change", (e) => {
     const el = e.target;
     if (ours(e) || !(el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement)) return;
-    const secret = window.__piReviewCfg?.maskAllInputs || el.type === "password" || el.type === "hidden" || /pass|secret|token|card/i.test(el.name || "");
-    const value = el.type === "checkbox" || el.type === "radio" ? String(el.checked) : secret ? "••••" : clean(el.value).slice(0, 120);
-    ev("input", { d: describe(el), value });
+    const recordInputs = !!window.__piReviewCfg?.recordInputs;
+    const secret = !recordInputs && (window.__piReviewCfg?.maskAllInputs || el.type === "password" || el.type === "hidden" || /pass|secret|token|card/i.test(el.name || ""));
+    // Recorded test inputs keep their exact value so a generated test can type it again.
+    const value = el.type === "checkbox" || el.type === "radio" ? String(el.checked) : secret ? "••••" : recordInputs ? el.value.slice(0, 2000) : clean(el.value).slice(0, 120);
+    ev("input", { d: describe(el, true), value });
+  }, true);
+
+  // Enter in a text field (form submission) and Escape (closing dialogs) are steps a test has to repeat.
+  // Enter on buttons and links is left out: the click it causes is recorded already.
+  addEventListener("keydown", (e) => {
+    if (ours(e) || pinMode || draft || drag || e.isComposing || e.keyCode === 229 || e.repeat) return;
+    const el = e.target;
+    const field = (el instanceof HTMLInputElement && INPUT_ROLE[el.type] !== "button" && !/^(checkbox|radio|file)$/.test(el.type)) || el?.isContentEditable;
+    if (e.key === "Enter" && field) ev("key", { key: "Enter", d: describe(el, true) });
+    else if (e.key === "Escape") ev("key", { key: "Escape" });
   }, true);
 
   document.addEventListener("selectionchange", debounce(() => {
@@ -217,7 +328,7 @@
         recordCanvas: canvasFps > 0,
         dataURLOptions: { type: "image/webp", quality: 0.6 },
         maskAllInputs: !!window.__piReviewCfg?.maskAllInputs,
-        maskInputOptions: { password: true },
+        maskInputOptions: { password: !window.__piReviewCfg?.recordInputs },
         inlineStylesheet: true,
         blockSelector: "[data-pi-review]",
       });
@@ -529,7 +640,7 @@
     setPinMode(false);
     if (dragged(d)) draftPin(describeArea(toRect(d)), Date.now(), true, d.x1, d.y1);
     else {
-      const desc = describe(under(d.x1, d.y1));
+      const desc = describe(under(d.x1, d.y1), true);
       // Inside a PDF there is no element to outline, so mark the spot that was clicked.
       if (desc && plainDoc) desc.rect = [Math.round(d.x1 - 24), Math.round(d.y1 - 24), 48, 48];
       if (desc) draftPin(desc, Date.now(), false, d.x1, d.y1);

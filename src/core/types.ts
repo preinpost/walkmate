@@ -56,6 +56,11 @@ export const ReviewParamsSchema = {
 			description: "Required for live reviews; ask the user. true: record in a temporary clean Chrome profile that starts logged out and is removed afterwards, " +
 				"so the demonstration includes login. false: the shared profile, which may already be logged in and keeps login between reviews. Ignored for document reviews.",
 		},
+		record_inputs: {
+			type: "boolean",
+			description: "Live review only, default false. true: record typed values unmasked, including passwords, in events, report and DOM replay, " +
+				"so test-account credentials can be reused. Set it only when the user explicitly asks to record IDs/passwords. Network bodies stay redacted.",
+		},
 	},
 	required: ["title"],
 	additionalProperties: false,
@@ -79,6 +84,8 @@ export interface ReviewRequest {
 	sections?: Section[];
 	/** Live review in a temporary clean profile instead of the shared login profile. */
 	isolated?: boolean;
+	/** Record typed values, passwords included, without masking. For test accounts only. */
+	record_inputs?: boolean;
 }
 
 /** Check a request from a client that may not validate against the schema. Throws with a readable message. */
@@ -102,6 +109,10 @@ export function parseReviewRequest(input: unknown): ReviewRequest {
 	if (o.isolated !== undefined) {
 		if (typeof o.isolated !== "boolean") fail("isolated must be a boolean");
 		req.isolated = o.isolated as boolean;
+	}
+	if (o.record_inputs !== undefined) {
+		if (typeof o.record_inputs !== "boolean") fail("record_inputs must be a boolean");
+		req.record_inputs = o.record_inputs as boolean;
 	}
 	if (o.sections !== undefined) {
 		if (!Array.isArray(o.sections)) fail("sections must be an array");
