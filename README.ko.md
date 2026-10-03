@@ -263,7 +263,27 @@ E2E skill처럼 순서가 정해져 있고 대상이 testid·css·role로 고정
    `record_inputs: true`를 함께 준다("로그인부터 보여줄게, 비번도 기록해서 열어줘").
 2. **제출한다.** 에이전트가 `review_wait`로 시연 내용(행동·음성·핀·스크린샷)을 받는다.
 3. **내보낸다.** 에이전트가 `export_to_playwright({ recording, cwd })`를 호출하면 프로젝트의 테스트 폴더에 파일을 쓰고 코드를 돌려받는다.
-   이어서 `npx playwright test <파일>`로 실행해 보고, TODO 줄을 고치고 시연 목적을 확인하는 expect를 보탠다.
+4. **실행한다.** 에이전트가 `run_playwright({ spec })`로 실행하고, TODO 줄을 고치고 시연 목적을 확인하는 expect를 보탠다.
+
+리뷰가 끝나면 에이전트는 시연 내용을 요약하고 `1. 문제 원인 찾기 2. Playwright 테스트로 만들기 3. skill로 저장`처럼
+번호로 고를 수 있는 다음 단계로 답을 마친다. 번호만 답하면 그 작업을 한다.
+
+### Walkmate로 테스트 실행 (`run_playwright`)
+
+Walkmate는 `@playwright/test`를 함께 설치하므로 **프로젝트에 Playwright나 브라우저를 설치하지 않아도** 테스트를 돌릴 수 있다.
+브라우저는 시연에 쓰는 시스템 Chrome(`WALKMATE_CHROME`)을 쓴다.
+
+- spec을 `<프로젝트>/.walkmate/playwright/<실행 폴더>/`에 복사해 실행한다. 상대 import는 원래 폴더를 가리키게 바꾸고,
+  `node_modules`가 없거나 ESM(`"type": "module"`)인 프로젝트에서도 돌아간다. 프로젝트의 `playwright.config`는 쓰지 않는다.
+- spec이 `walkmate/playwright`를 쓰지 않아도 실행할 때 `withWalkmate`로 감싸서, 테스트마다 `.walkmate/runs/<실행 폴더>/replay.html`이 남는다
+  (`replay: false`로 끈다). 원본 파일은 바꾸지 않는다.
+- `env`로 테스트 프로세스에만 환경 변수를 넘긴다. 가려진 입력값(`WALKMATE_PASSWORD` 등)은 에이전트가 사용자에게 물어서 넘기며, 파일로 저장하지 않는다.
+- 결과로 테스트별 통과/실패, 실패한 `test.step`, 오류, 실패 시 스크린샷·trace 경로, replay 경로를 돌려준다.
+  45초 안에 끝나지 않으면 id를 돌려주고, 에이전트가 `run_playwright({ id })`로 이어서 기다린다. `headed: true`면 Chrome 창을 띄운다.
+
+```bash
+walkmate test e2e/login.spec.ts --env WALKMATE_PASSWORD=... [--headed] [--grep 제목] [--no-replay]
+```
 
 녹화할 때 페이지에서 요소마다 **locator 후보와 그 순간의 일치 개수**를 함께 기록하므로, 내보낼 때 유일한 후보를 고를 수 있다.
 
@@ -364,6 +384,7 @@ node dist/mcp/cli.js playbook "$REVIEW" --from 42 --to 50 --title "시연한 작
 | `review_wait` | 최대 45초(`WALKMATE_WAIT_SEC`) 기다린다. 끝났으면 피드백(텍스트+스크린샷), 아니면 "다시 호출" |
 | `review_cancel` | 열린 리뷰를 닫는다 |
 | `export_to_playwright` | 라이브 시연 녹화를 Playwright 테스트 파일로 내보낸다. 경로·코드·TODO를 반환. 브라우저는 열지 않는다 |
+| `run_playwright` | Walkmate에 들어 있는 Playwright와 시스템 Chrome으로 spec을 실행한다. 프로젝트에 설치 불필요. 테스트별 결과·실패 단계·스크린샷·trace·replay를 반환 |
 
 `review_wait`는 클라이언트의 도구 타임아웃(Codex `tool_timeout_sec`, Claude Code `MCP_TOOL_TIMEOUT`, pi `timeout` 기본 60초)보다
 짧게 기다리고 돌아오므로 설정을 바꿀 필요가 없다. 진행 알림(progress)도 보낸다.
@@ -512,11 +533,12 @@ src/mcp/    stdio MCP 서버와 CLI (dist/로 빌드)
 | `core/live/report.ts` | 이벤트 압축, 발화 ↔ 대상 연결, 스크린샷 선택·표시, 보고서 |
 | `core/live/replay.ts` | rrweb + 음성 동기 재생 페이지, 저장한 이미지·폰트로 주소 바꾸기 |
 | `core/live/playbook.ts` | 저장된 라이브 리뷰에서 실행 전 검토용 JSON·Markdown 플레이북 초안 생성 |
+| `core/live/run-playwright.ts`, `mcp/playwright.ts` | 내장 Playwright로 spec 실행: 복사·`withWalkmate` 감싸기·결과 정리, `run_playwright` 도구 |
 | `core/live/export-playwright.ts` | 저장된 라이브 리뷰를 Playwright `.spec.ts`로 변환: locator 선택, 겹치는 이벤트 정리, 팝업·주소 확인 |
 | `core/page/live.js` | 앱 페이지: 툴바, 포인터·클릭·선택·입력·스크롤·이동 추적, React 컴포넌트·소스 찾기, 핀 |
 | `core/transcribe.ts` | whisper.cpp / OpenAI, 단어 단위 타임스탬프, 무음 클립 제외 |
 | `mcp/server.ts` | MCP 도구 `review_start` / `review_wait` / `review_cancel` / `export_to_playwright`, 프롬프트 |
-| `mcp/cli.ts` | CLI: `mcp`(서버), `doctor`(점검), `setup`(모델 받기), `playbook`(시연 변환), `playwright`(테스트 내보내기) |
+| `mcp/cli.ts` | CLI: `mcp`(서버), `doctor`(점검), `setup`(모델 받기), `playbook`(시연 변환), `playwright`(테스트 내보내기), `test`(테스트 실행) |
 
 ## 개발
 

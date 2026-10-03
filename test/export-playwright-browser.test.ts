@@ -1,21 +1,19 @@
 // Optional end-to-end check with the system Chrome: record a live demonstration, export it, run the exported test.
 //   WALKMATE_E2E=1 node --test test/export-playwright-browser.test.ts
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { test } from "node:test";
 import { exportPlaywright } from "../src/core/live/export-playwright.ts";
+import { runPlaywrightSpec } from "../src/core/live/run-playwright.ts";
 import { runLiveSession } from "../src/core/live/session.ts";
 import type { Recorder } from "../src/core/live/mic.ts";
 
 const enabled = process.env.WALKMATE_E2E === "1";
-const repo = fileURLToPath(new URL("..", import.meta.url));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const PASSWORD = "p@ss w0rd!";
 const noMic: Recorder = async () => ({ startedAt: Date.now(), stop: async () => {} });
@@ -140,10 +138,8 @@ test("a recorded login demonstration exports to a Playwright test that passes ag
 		await writeFile(join(dir, "events.json"), JSON.stringify(outcome, null, 2));
 	}
 
-	// A project with Playwright available and a testDir in its config.
-	await symlink(join(repo, "node_modules"), join(cwd, "node_modules"), "dir");
-	await writeFile(join(cwd, "playwright.config.ts"), `import { defineConfig } from "@playwright/test";
-export default defineConfig({ testDir: "e2e", outputDir: "test-results", reporter: "line", workers: 1, use: { channel: "chrome", headless: true } });\n`);
+	// An ESM project with no node_modules: Walkmate's own Playwright runs the exported test.
+	await writeFile(join(cwd, "package.json"), JSON.stringify({ name: "app", type: "module" }));
 	const result = await exportPlaywright(undefined, { cwd });
 	const code = await readFile(result.path, "utf8");
 	assert.equal(result.path, join(cwd, "e2e", "login-and-delete.spec.ts"));
@@ -162,7 +158,23 @@ export default defineConfig({ testDir: "e2e", outputDir: "test-results", reporte
 	]) assert.ok(code.includes(expected), `missing ${expected}\n\n${code}`);
 	assert.doesNotMatch(code, /getByRole\("button", \{ name: "로그인"/, "implicit submission is not clicked twice");
 
-	const { stdout } = await promisify(execFile)("npx", ["playwright", "test", "-c", join(cwd, "playwright.config.ts")], { cwd: repo })
-		.catch((err) => assert.fail(`exported test failed:\n${err.stdout}\n${err.stderr}\n\n${code}`));
-	assert.match(stdout, /1 passed/);
+	const run = await runPlaywrightSpec({ cwd, spec: result.path });
+	assert.equal(run.status, "passed", `${JSON.stringify(run.tests, null, 2)}\n${run.output}\n\n${code}`);
+	assert.equal(run.tests.length, 1);
+	assert.ok(run.replay, "the run is recorded with withWalkmate");
+	assert.ok(run.tests[0].replay && existsSync(run.tests[0].replay), "each test leaves replay.html");
+	assert.ok(run.tests[0].run?.startsWith(join(cwd, ".walkmate", "runs")), "the recording lives in the project's .walkmate/runs");
+	assert.equal(run.tests[0].replay, join(run.tests[0].run!, "replay.html"));
+	for (const f of ["run.json", "steps.json", "network.json", "console.json"]) assert.ok(existsSync(join(run.tests[0].run!, f)), f);
+	assert.equal(existsSync(join(cwd, "node_modules")), false, "nothing was installed in the project");
+
+	// A wrong value fails at the step that uses it, with evidence.
+	await writeFile(result.path, code.replace(JSON.stringify(PASSWORD), 'process.env.TEST_PASSWORD ?? ""'));
+	const wrong = await runPlaywrightSpec({ cwd, spec: result.path, env: { TEST_PASSWORD: "wrong" }, testTimeoutSec: 15 });
+	assert.equal(wrong.status, "failed");
+	assert.match(wrong.tests[0].failedStep ?? "", /Enter: 비밀번호/);
+	assert.match(wrong.tests[0].error ?? "", /toHaveURL/);
+	assert.ok(wrong.tests[0].attachments.some((a) => a.name === "screenshot"));
+	const right = await runPlaywrightSpec({ cwd, spec: result.path, env: { TEST_PASSWORD: PASSWORD } });
+	assert.equal(right.status, "passed", right.output);
 });

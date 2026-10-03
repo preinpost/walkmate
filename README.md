@@ -266,7 +266,27 @@ to a `.spec.ts` file with `export_to_playwright`. It reads the saved recording o
    also pass `record_inputs: true` ("I'll show you from login, record the password too").
 2. **Submit.** The agent receives the demonstration (actions, voice, pins, screenshots) through `review_wait`.
 3. **Export.** The agent calls `export_to_playwright({ recording, cwd })`, which writes the file into the project's test folder and returns the code.
-   Then it runs `npx playwright test <file>`, fixes the TODO lines and adds expect checks for the goal of the demonstration.
+4. **Run.** The agent runs it with `run_playwright({ spec })`, fixes the TODO lines and adds expect checks for the goal of the demonstration.
+
+After a review, the agent summarizes the demonstration and ends its reply with numbered next steps such as
+`1. find the cause 2. turn it into a Playwright test 3. save it as a skill`. Answer with just the number.
+
+### Running tests through Walkmate (`run_playwright`)
+
+Walkmate installs `@playwright/test` with itself, so tests run **without installing Playwright or browsers in the project**.
+The browser is the system Chrome used for demonstrations (`WALKMATE_CHROME`).
+
+- The spec is copied to `<project>/.walkmate/playwright/<run folder>/` and run from there. Relative imports are rewritten to point at the original folder,
+  and it works in projects with no `node_modules` or with ESM (`"type": "module"`). The project's `playwright.config` is not used.
+- Even if the spec does not use `walkmate/playwright`, the run wraps it with `withWalkmate`, so each test leaves `.walkmate/runs/<run folder>/replay.html`
+  (`replay: false` turns it off). The original file is not changed.
+- `env` passes environment variables to the test process only. The agent asks the user for masked values (`WALKMATE_PASSWORD` and so on); they are not written to disk.
+- The result lists pass/fail per test, the failed `test.step`, the error, screenshot and trace paths on failure, and replay paths.
+  If the run is not done within 45 seconds it returns an id and the agent keeps waiting with `run_playwright({ id })`. `headed: true` shows the Chrome window.
+
+```bash
+walkmate test e2e/login.spec.ts --env WALKMATE_PASSWORD=... [--headed] [--grep title] [--no-replay]
+```
 
 While recording, the page stores **locator candidates for each element together with how many elements matched at that moment**,
 so the export can pick a unique one.
@@ -368,6 +388,7 @@ Reviews take several minutes and MCP clients put timeouts on tool calls, so wait
 | `review_wait` | Waits up to 45 seconds (`WALKMATE_WAIT_SEC`). Returns feedback (text + screenshots) if finished, otherwise "call again" |
 | `review_cancel` | Closes the open review |
 | `export_to_playwright` | Exports a live demonstration recording as a Playwright test file. Returns the path, code and TODOs. Does not open a browser |
+| `run_playwright` | Runs a spec with Walkmate's bundled Playwright and the system Chrome; nothing to install in the project. Returns per-test results, the failed step, screenshots, traces and replays |
 
 `review_wait` returns before the client's tool timeout (Codex `tool_timeout_sec`, Claude Code `MCP_TOOL_TIMEOUT`, pi `timeout`, 60 seconds by default),
 so you don't need to change any settings. It also sends progress notifications.
@@ -518,11 +539,12 @@ src/mcp/    stdio MCP server and CLI (built to dist/)
 | `core/live/report.ts` | Event compaction, linking utterances to targets, screenshot selection and marking, report |
 | `core/live/replay.ts` | rrweb + voice synchronized replay page, rewriting addresses to the saved images and fonts |
 | `core/live/playbook.ts` | Builds pre-run JSON and Markdown draft playbooks from a saved live review |
+| `core/live/run-playwright.ts`, `mcp/playwright.ts` | Runs specs with the bundled Playwright: copying, `withWalkmate` wrapping, result summary, the `run_playwright` tool |
 | `core/live/export-playwright.ts` | Converts a saved live review into a Playwright `.spec.ts`: locator choice, duplicate event cleanup, popups and URL checks |
 | `core/page/live.js` | App page: toolbar, tracking pointer, clicks, selection, input, scroll, and navigation, finding React components and sources, pins |
 | `core/transcribe.ts` | whisper.cpp / OpenAI, word-level timestamps, excluding silent clips |
 | `mcp/server.ts` | MCP tools `review_start` / `review_wait` / `review_cancel` / `export_to_playwright`, prompts |
-| `mcp/cli.ts` | CLI: `mcp` (server), `doctor` (checks), `setup` (download model), `playbook` (convert a demonstration), `playwright` (export a test) |
+| `mcp/cli.ts` | CLI: `mcp` (server), `doctor` (checks), `setup` (download model), `playbook` (convert a demonstration), `playwright` (export a test), `test` (run a test) |
 
 ## Development
 

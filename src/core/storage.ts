@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 /** Project-local artifacts; shared Chrome profiles and voice models stay in config.DATA_DIR. */
 export function projectPaths(cwd: string) {
 	const root = join(resolve(cwd), ".walkmate");
-	return { root, reviews: join(root, "reviews"), runs: join(root, "runs"), skills: join(root, "skills"), notes: join(root, "notes") };
+	return { root, reviews: join(root, "reviews"), runs: join(root, "runs"), skills: join(root, "skills"), notes: join(root, "notes"), playwright: join(root, "playwright") };
 }
 
 export function createReviewDir(cwd: string, group: string): Promise<string> {
@@ -15,7 +15,12 @@ export function createRunDir(cwd: string): Promise<string> {
 	return createArtifactDir(cwd, "runs");
 }
 
-async function createArtifactDir(cwd: string, kind: "reviews" | "runs", group?: string): Promise<string> {
+/** A staging folder for one Playwright test run through Walkmate's own Playwright. */
+export function createPlaywrightDir(cwd: string): Promise<string> {
+	return createArtifactDir(cwd, "playwright");
+}
+
+async function createArtifactDir(cwd: string, kind: "reviews" | "runs" | "playwright", group?: string): Promise<string> {
 	const paths = projectPaths(cwd);
 	await mkdir(paths.root, { recursive: true, mode: 0o700 });
 	// Keep recordings (including sensitive request bodies) out of Git without editing the project's ignore rules.

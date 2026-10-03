@@ -16,7 +16,7 @@ async function project(t: { after(fn: () => Promise<void>): void }) {
 test("project paths resolve recordings, skills and notes inside the selected project", () => {
 	const root = resolve("example-project", ".walkmate");
 	assert.deepEqual(projectPaths("example-project"), {
-		root, reviews: join(root, "reviews"), runs: join(root, "runs"), skills: join(root, "skills"), notes: join(root, "notes"),
+		root, reviews: join(root, "reviews"), runs: join(root, "runs"), skills: join(root, "skills"), notes: join(root, "notes"), playwright: join(root, "playwright"),
 	});
 });
 

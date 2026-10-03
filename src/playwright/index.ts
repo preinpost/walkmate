@@ -180,7 +180,7 @@ class Recording {
 	}
 
 	private onRequest(request: Request) {
-		const page = request.frame()?.page();
+		const page = pageOf(request);
 		if (!page || this.network.length >= MAX_ENTRIES || /^(data|blob|chrome-extension|devtools):/.test(request.url())) return;
 		const postData = request.postData();
 		const entry: NetEntry = { id: String(this.network.length + 1), tab: this.tab(page).n, t: this.sec(), method: request.method(), url: request.url(),
@@ -275,3 +275,12 @@ function strip(text: string) {
 
 const round = (n: number) => Math.round(n * 1000) / 1000;
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** A popup's first navigation request has no frame yet, and request.frame() throws for it. */
+function pageOf(request: Request): Page | undefined {
+	try {
+		return request.frame()?.page();
+	} catch {
+		return undefined;
+	}
+}

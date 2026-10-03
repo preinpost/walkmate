@@ -27,7 +27,7 @@ const textOf = (r: CallToolResult) => r.content.filter((c) => c.type === "text")
 test("start, wait while open, submit, get the feedback", async () => {
 	const { client, shutdown, cwd } = await connect();
 	const tools = await client.listTools();
-	assert.deepEqual(tools.tools.map((t) => t.name), ["review_start", "review_wait", "review_cancel", "export_to_playwright", "run_start", "run_step", "run_finish"]);
+	assert.deepEqual(tools.tools.map((t) => t.name), ["review_start", "review_wait", "review_cancel", "export_to_playwright", "run_playwright", "run_start", "run_step", "run_finish"]);
 	assert.ok(client.getInstructions()?.includes("review_wait"));
 
 	const started = await client.callTool({
@@ -217,6 +217,30 @@ test("live reviews ask the user about isolated before opening; document reviews 
 		const bad = await client.callTool({ name: "review_start", arguments: { isolated: "yes" } });
 		assert.equal(bad.isError, true);
 		assert.match(textOf(bad), /isolated must be a boolean/);
+	} finally {
+		await shutdown();
+		await client.close();
+	}
+});
+
+test("a submitted live demonstration asks for numbered next steps; a document review does not", async () => {
+	const { client, shutdown } = await connect({ runReview: async (req) => (
+		{ text: "시연 내용", details: { status: "submitted", title: req.title, dir: "test", mode: req.url ? "live" : "doc" } }
+	) });
+	try {
+		const live = await client.callTool({ name: "review_start", arguments: { isolated: true } });
+		assert.ok(!live.isError, textOf(live));
+		const liveDone = textOf(await client.callTool({ name: "review_wait", arguments: { id: "r1" } }));
+		assert.match(liveDone, /end your reply with numbered next steps/);
+		assert.match(liveDone, /export_to_playwright/);
+		assert.match(liveDone, /record_inputs=true writes them into the test/);
+		assert.match(liveDone, /user can include them in the answer/);
+		assert.match(liveDone, /passed to run_playwright as env and not written into the code/);
+		const doc = await client.callTool({ name: "review_start", arguments: { sections: [{ id: "n1", kind: "note", title: "변경" }] } });
+		assert.ok(!doc.isError, textOf(doc));
+		const docDone = textOf(await client.callTool({ name: "review_wait", arguments: { id: "r2" } }));
+		assert.doesNotMatch(docDone, /numbered next steps/);
+		assert.match(client.getInstructions() ?? "", /numbered next steps the user can pick by number/);
 	} finally {
 		await shutdown();
 		await client.close();

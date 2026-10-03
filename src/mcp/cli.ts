@@ -12,6 +12,7 @@ import { CHROME_BIN } from "../core/live/cdp.ts";
 import { ffmpegRecorder } from "../core/live/mic.ts";
 import { exportPlaywright } from "../core/live/export-playwright.ts";
 import { writePlaybook } from "../core/live/playbook.ts";
+import { runPlaywrightSpec } from "../core/live/run-playwright.ts";
 import { configFromEnv } from "../core/transcribe.ts";
 import { createReviewServer } from "./server.ts";
 import { projectPaths } from "../core/storage.ts";
@@ -27,6 +28,8 @@ const HELP = `walkmate — 시연 기록과 피드백을 코딩 에이전트에�
                              시연을 playbook.json / playbook.md 초안으로 변환 (자동 실행 없음)
   walkmate playwright [리뷰 폴더] [--out 파일] [--title 제목] [--from 초] [--to 초] [--walkmate | --no-walkmate] [--overwrite]
                              시연을 Playwright 테스트(.spec.ts)로 내보내기 (폴더를 빼면 가장 최근 녹화)
+  walkmate test <spec> [--headed] [--grep 제목] [--env 이름=값]... [--no-replay]
+                             Walkmate에 들어 있는 Playwright와 Chrome으로 테스트 실행 (프로젝트에 설치 불필요)
 
 등록 (npm link 안 했으면 walkmate 대신 node <저장소>/dist/mcp/cli.js):
   claude mcp add -s user walkmate -- walkmate mcp
@@ -84,7 +87,31 @@ switch (cmd) {
 			console.log(`Playwright 테스트 ${result.steps}단계: ${result.path}`);
 			for (const w of result.warnings) console.log(`△ ${w}`);
 			for (const t of result.todos) console.log(`TODO ${t}`);
-			console.log(`실행: npx playwright test ${result.path}`);
+			console.log(`실행: walkmate test ${result.path}${result.env.map((e) => ` --env ${e}=...`).join("")}`);
+		} catch (err) {
+			console.error(err instanceof Error ? err.message : String(err));
+			process.exitCode = 2;
+		}
+		break;
+	case "test":
+		try {
+			const { values, positionals } = parseArgs({ args, allowPositionals: true, options: {
+				headed: { type: "boolean" }, grep: { type: "string" }, env: { type: "string", multiple: true }, "no-replay": { type: "boolean" },
+			} });
+			if (positionals.length !== 1) throw new Error("test에는 테스트 파일 하나를 지정하세요.");
+			const env: Record<string, string> = {};
+			for (const pair of values.env ?? []) {
+				const at = pair.indexOf("=");
+				if (at < 1) throw new Error(`--env는 이름=값 형식이어야 합니다: ${pair}`);
+				env[pair.slice(0, at)] = pair.slice(at + 1);
+			}
+			const ac = new AbortController();
+			process.once("SIGINT", () => ac.abort());
+			const r = await runPlaywrightSpec({ cwd: process.cwd(), spec: positionals[0], env, headed: values.headed, grep: values.grep, replay: !values["no-replay"], signal: ac.signal });
+			console.log(r.output);
+			for (const t of r.tests) if (t.replay) console.log(`replay: ${t.replay}`);
+			console.log(`${r.status} · ${r.dir}`);
+			process.exitCode = r.status === "passed" ? 0 : 1;
 		} catch (err) {
 			console.error(err instanceof Error ? err.message : String(err));
 			process.exitCode = 2;

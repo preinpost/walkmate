@@ -444,7 +444,7 @@ export async function exportPlaywright(recording: string | undefined, opts: Play
 	});
 	if (rec.status && rec.status !== "submitted") spec.warnings.push(`녹화가 제출되지 않고 끝났습니다 (${rec.status}). 단계가 빠졌을 수 있습니다.`);
 	if (!(await resolvable(dirname(path), "@playwright/test"))) {
-		spec.warnings.push("이 프로젝트에서 @playwright/test를 찾지 못했습니다: npm i -D @playwright/test && npx playwright install chromium");
+		spec.warnings.push("이 프로젝트에는 @playwright/test가 없습니다. run_playwright(CLI: walkmate test)는 Walkmate의 Playwright로 실행하므로 설치하지 않아도 됩니다.");
 	}
 	if (withWalkmate && !(await resolvable(dirname(path), "walkmate"))) {
 		spec.warnings.push("walkmate 패키지를 찾지 못했습니다. 설치하거나 with_walkmate=false로 다시 내보내세요.");

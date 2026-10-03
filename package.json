@@ -46,22 +46,14 @@
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.2.0",
+    "@playwright/test": "^1.63.0",
     "@rrweb/record": "^2.1.6",
     "marked": "^16.0.0",
     "rrweb": "^2.1.6"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "^2.2.0",
-    "@playwright/test": "^1.63.0",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0"
-  },
-  "peerDependencies": {
-    "@playwright/test": ">=1.48"
-  },
-  "peerDependenciesMeta": {
-    "@playwright/test": {
-      "optional": true
-    }
   }
 }
