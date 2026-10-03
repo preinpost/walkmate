@@ -135,7 +135,7 @@ class Recording {
 		await Promise.all([...this.tabs.values()].map(({ stream }) => stream && new Promise((resolve) => stream.end(resolve))));
 		let replay: string | undefined;
 		try {
-			replay = await writeReplay({ dir: this.dir, title: titleOf(testInfo), t0: this.t0, rrweb: this.rrweb, clips: [], utterances: [], steps: this.markers });
+			replay = await writeReplay({ dir: this.dir, title: titleOf(testInfo), t0: this.t0, rrweb: this.rrweb, clips: [], utterances: [], steps: this.markers, stepGap: 1.2 });
 			if (!replay) this.warnings.push("No full rrweb snapshot was recorded; replay.html is unavailable (e.g. the test never left about:blank).");
 		} catch (err) { this.warnings.push(`Replay generation failed: ${err instanceof Error ? err.message : String(err)}`); }
 		const run: WalkmateRun = {

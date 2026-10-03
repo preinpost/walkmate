@@ -277,6 +277,8 @@ Walkmate는 `@playwright/test`를 함께 설치하므로 **프로젝트에 Playw
   `node_modules`가 없거나 ESM(`"type": "module"`)인 프로젝트에서도 돌아간다. 프로젝트의 `playwright.config`는 쓰지 않는다.
 - spec이 `walkmate/playwright`를 쓰지 않아도 실행할 때 `withWalkmate`로 감싸서, 테스트마다 `.walkmate/runs/<실행 폴더>/replay.html`이 남는다
   (`replay: false`로 끈다). 원본 파일은 바꾸지 않는다.
+- Playwright는 테스트 전체를 수십 ms 만에 끝내므로, replay에는 `test.step`마다 1.2초 간격을 넣어 재생한다(실제 시간은 `run.json`·`steps.json`).
+  재생 페이지에서 속도(0.1×~4×)를 바꾸거나 **단계마다 멈춤**을 켜서 한 단계씩 볼 수 있다. 스페이스바로 재생/정지.
 - `env`로 테스트 프로세스에만 환경 변수를 넘긴다. 가려진 입력값(`WALKMATE_PASSWORD` 등)은 에이전트가 사용자에게 물어서 넘기며, 파일로 저장하지 않는다.
 - 결과로 테스트별 통과/실패, 실패한 `test.step`, 오류, 실패 시 스크린샷·trace 경로, replay 경로를 돌려준다.
   45초 안에 끝나지 않으면 id를 돌려주고, 에이전트가 `run_playwright({ id })`로 이어서 기다린다. `headed: true`면 Chrome 창을 띄운다.

@@ -280,6 +280,8 @@ The browser is the system Chrome used for demonstrations (`WALKMATE_CHROME`).
   and it works in projects with no `node_modules` or with ESM (`"type": "module"`). The project's `playwright.config` is not used.
 - Even if the spec does not use `walkmate/playwright`, the run wraps it with `withWalkmate`, so each test leaves `.walkmate/runs/<run folder>/replay.html`
   (`replay: false` turns it off). The original file is not changed.
+- Playwright finishes a whole test in tens of milliseconds, so the replay inserts 1.2 seconds before each `test.step` (real timings stay in `run.json` and `steps.json`).
+  The replay page has a speed control (0.1× to 4×) and **pause at each step** to go one step at a time. Space toggles play/pause.
 - `env` passes environment variables to the test process only. The agent asks the user for masked values (`WALKMATE_PASSWORD` and so on); they are not written to disk.
 - The result lists pass/fail per test, the failed `test.step`, the error, screenshot and trace paths on failure, and replay paths.
   If the run is not done within 45 seconds it returns an id and the agent keeps waiting with `run_playwright({ id })`. `headed: true` shows the Chrome window.

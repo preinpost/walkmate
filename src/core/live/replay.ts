@@ -19,6 +19,13 @@ export async function writeReplay(opts: {
 	steps?: { t: number; text: string; tab?: number }[];
 	/** Original URL → saved copy, so images and fonts load without the dev server. */
 	assets?: Record<string, string>;
+	/** Initial playback speed. Default 1. */
+	speed?: number;
+	/**
+	 * Seconds of stillness inserted before each step marker (and after the last event), for automated
+	 * runs that finish a whole test in milliseconds. Ignored when there is audio to keep in sync.
+	 */
+	stepGap?: number;
 }): Promise<string | undefined> {
 	const tabs: { tab: number; events: unknown[] }[] = [];
 	for (const r of opts.rrweb) {
@@ -39,6 +46,20 @@ export async function writeReplay(opts: {
 		tabs.push({ tab: r.tab, events });
 	}
 	if (!tabs.length) return undefined;
+	let steps = opts.steps ?? [];
+	const gap = !opts.clips.length && steps.length && opts.stepGap ? opts.stepGap * 1000 : 0;
+	if (gap) {
+		const marks = steps.map((st) => opts.t0 + st.t * 1000).sort((a, b) => a - b);
+		const shift = (ts: number) => ts + gap * marks.filter((m) => m <= ts).length;
+		const lastMark = shift(marks.at(-1)!);
+		for (const t of tabs) {
+			const events = t.events as { timestamp: number }[];
+			for (const e of events) e.timestamp = shift(e.timestamp);
+			// Hold the final screen, past the last step (assertions and the result add no DOM events).
+			events.push({ type: 5, timestamp: Math.max(events.at(-1)!.timestamp, lastMark) + gap, data: { tag: "walkmate-end", payload: {} } } as never);
+		}
+		steps = steps.map((st) => ({ ...st, t: (shift(opts.t0 + st.t * 1000) - opts.t0) / 1000 }));
+	}
 
 	const lib = distFile("rrweb", "rrweb.umd.min.cjs");
 	const css = distFile("rrweb", "style.min.css");
@@ -47,7 +68,9 @@ export async function writeReplay(opts: {
 		t0: opts.t0,
 		tabs,
 		clips: opts.clips.map((c) => ({ src: basename(c.file), offset: c.offset })),
-		utterances: [...opts.utterances.map((u) => ({ t: u.start, text: u.text, tab: u.tab })), ...(opts.steps ?? [])].sort((a, b) => a.t - b.t),
+		utterances: [...opts.utterances.map((u) => ({ t: u.start, text: u.text, tab: u.tab })), ...steps.map((st) => ({ ...st, step: true }))].sort((a, b) => a.t - b.t),
+		speed: opts.speed ?? 1,
+		gap: gap / 1000,
 	};
 	const json = JSON.stringify(data).replace(/</g, "\\u003c");
 	const html = `<!doctype html>
@@ -57,6 +80,7 @@ body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Go
 #stage { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 #bar { display: flex; gap: 10px; align-items: center; padding: 8px 12px; background: #1c1c1e; }
 #bar input[type=range] { flex: 1; }
+#bar label { color: #aaa; white-space: nowrap; }
 button, select { font: inherit; background: #333; color: #eee; border: 0; border-radius: 6px; padding: 4px 10px; }
 #time { font-variant-numeric: tabular-nums; color: #aaa; }
 #view { flex: 1; position: relative; overflow: hidden; }
@@ -67,13 +91,16 @@ button, select { font: inherit; background: #333; color: #eee; border: 0; border
 .u { padding: 8px 12px; border-bottom: 1px solid #262626; cursor: pointer; }
 .u:hover { background: #222; } .u.now { background: #23324f; }
 .u small { color: #888; display: block; }
+.note { margin: 0; padding: 8px 12px; color: #999; font-size: 12px; border-bottom: 1px solid #333; }
 </style></head>
 <body>
 <div id="stage">
-  <div id="bar"><button id="play">▶</button><select id="tab"></select><input id="seek" type="range" min="0" value="0"><span id="time">0:00</span></div>
+  <div id="bar"><button id="play">▶</button><select id="tab"></select><input id="seek" type="range" min="0" value="0"><span id="time">0:00</span>
+    <select id="speed" title="재생 속도"><option value="0.1">0.1×</option><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option></select>
+    <label id="stepwrap" hidden><input id="stepstop" type="checkbox"> 단계마다 멈춤</label></div>
   <div id="view"><div id="player"></div></div>
 </div>
-<div id="side"><h1>${esc(opts.title)}</h1><div id="utts"></div></div>
+<div id="side"><h1>${esc(opts.title)}</h1>${gap ? `<p class="note">재생할 때 단계마다 ${gap / 1000}초 간격을 넣었습니다. 실제 걸린 시간은 run.json·steps.json에 있습니다.</p>` : ""}<div id="utts"></div></div>
 <script>window.__DATA__ = ${json};</script>
 <script>(function(){var module={exports:{}};var exports=module.exports;${lib}
 ;window.rrweb=module.exports;})();</script>
@@ -82,7 +109,19 @@ const D = window.__DATA__;
 const $ = (id) => document.getElementById(id);
 const audios = D.clips.map((c) => Object.assign(new Audio(c.src), { _offset: c.offset }));
 // rrweb getCurrentTime() is only meaningful while playing, so track the paused position here.
-let replayer, first = 0, playing = false, pos = 0;
+let replayer, first = 0, playing = false, pos = 0, speed = D.speed;
+// Step markers (test.step, agent steps) in the replayer's clock, for pausing before each one.
+let stops = [], lastT = 0;
+const hasSteps = D.utterances.some((u) => u.step);
+$("stepwrap").hidden = !hasSteps;
+if (![...$("speed").options].some((o) => +o.value === speed)) $("speed").add(new Option(speed + "×", speed));
+$("speed").value = String(speed);
+const setSpeed = (v) => {
+  speed = v;
+  replayer?.setConfig({ speed });
+  for (const a of audios) { a.playbackRate = speed; a.preservesPitch = true; }
+};
+setSpeed(speed);
 
 D.tabs.forEach((t, i) => $("tab").add(new Option("탭 " + t.tab, i)));
 const fit = (w, h) => {
@@ -93,7 +132,8 @@ function load(i) {
   if (replayer) { replayer.pause(); replayer.destroy?.(); $("player").innerHTML = ""; }
   const events = D.tabs[i].events;
   first = events[0].timestamp;
-  replayer = new rrweb.Replayer(events, { root: $("player"), mouseTail: { strokeStyle: "#ff3b30" }, showWarning: false, skipInactive: false, UNSAFE_replayCanvas: true });
+  replayer = new rrweb.Replayer(events, { root: $("player"), mouseTail: { strokeStyle: "#ff3b30" }, showWarning: false, skipInactive: false, UNSAFE_replayCanvas: true, speed });
+  stops = D.utterances.filter((u) => u.step && (u.tab === undefined || u.tab === D.tabs[i].tab)).map((u) => D.t0 + u.t * 1000 - first).filter((x) => x > 0);
   replayer.on("resize", (d) => fit(d.width, d.height));
   $("seek").max = replayer.getMetaData().totalTime;
   playing = false; pos = 0; $("play").textContent = "▶";
@@ -104,10 +144,17 @@ const cur = () => (playing ? replayer.getCurrentTime() : pos);
 const reviewT = () => (first + cur() - D.t0) / 1000;
 function seekReview(t) {
   pos = Math.min(Math.max(0, D.t0 + t * 1000 - first), replayer.getMetaData().totalTime);
+  lastT = pos;
   if (playing) replayer.play(pos); else replayer.pause(pos);
   sync(true);
 }
 function sync(force) {
+  // Stop just before the next step marker, so the result of the previous step stays on screen.
+  if (playing && $("stepstop").checked) {
+    const now = cur(), hit = stops.find((x) => x > lastT + 1 && x <= now);
+    if (hit !== undefined) { pos = Math.max(0, hit - 1); playing = false; $("play").textContent = "▶"; replayer.pause(pos); }
+  }
+  lastT = cur();
   const t = reviewT();
   for (const a of audios) {
     const local = t - a._offset;
@@ -120,23 +167,32 @@ function sync(force) {
   $("seek").value = cur();
   const s = Math.max(0, Math.floor(t));
   $("time").textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
-  document.querySelectorAll(".u").forEach((el) => el.classList.toggle("now", t >= +el.dataset.t && t < +el.dataset.t + 4));
+  // A step stays current until the next one; speech for 4 seconds.
+  const steps = [...document.querySelectorAll(".u[data-step]")];
+  const step = steps.filter((el) => +el.dataset.t <= t + 0.05).at(-1);
+  document.querySelectorAll(".u[data-t]").forEach((el) => el.classList.toggle("now", "step" in el.dataset ? el === step : t >= +el.dataset.t && t < +el.dataset.t + 4));
 }
 function togglePlay(on) {
   if (on === playing) return;
   if (!on) pos = replayer.getCurrentTime();
   else if (pos >= replayer.getMetaData().totalTime) pos = 0;
+  lastT = pos + 2;
   playing = on;
   $("play").textContent = playing ? "⏸" : "▶";
   if (playing) replayer.play(pos); else replayer.pause(pos);
   sync(true);
 }
 $("play").onclick = () => togglePlay(!playing);
+$("speed").onchange = () => setSpeed(+$("speed").value);
+addEventListener("keydown", (e) => {
+  if (e.target.closest?.("input,select")) return;
+  if (e.code === "Space") { e.preventDefault(); togglePlay(!playing); }
+});
 $("seek").oninput = () => seekReview((first + +$("seek").value - D.t0) / 1000);
 $("tab").onchange = () => load(+$("tab").value);
 $("utts").innerHTML = D.utterances.map((u) => {
   const m = Math.floor(u.t / 60), s = (u.t % 60).toFixed(1).padStart(4, "0");
-  return '<div class="u" data-t="' + u.t + '" data-tab="' + u.tab + '"><small>' + m + ":" + s + "</small>" + u.text.replace(/[&<>]/g, (c) => "&#" + c.charCodeAt(0) + ";") + "</div>";
+  return '<div class="u" data-t="' + u.t + '" data-tab="' + u.tab + '"' + (u.step ? " data-step" : "") + '><small>' + m + ":" + s + "</small>" + u.text.replace(/[&<>]/g, (c) => "&#" + c.charCodeAt(0) + ";") + "</div>";
 }).join("") || '<div class="u"><small>발화·단계 기록 없음</small></div>';
 $("utts").onclick = (e) => {
   const el = e.target.closest(".u[data-t]");
@@ -147,7 +203,7 @@ $("utts").onclick = (e) => {
 };
 addEventListener("resize", () => { const f = $("player").querySelector("iframe"); if (f) fit(f.width, f.height); });
 load(0);
-setInterval(() => playing && sync(false), 250);
+setInterval(() => playing && sync(false), 100);
 </script>
 </body></html>`;
 	const file = join(opts.dir, "replay.html");
